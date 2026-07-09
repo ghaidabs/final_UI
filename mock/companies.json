@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "slug": "ACME",
+    "name": "ACME Consulting",
+    "owner_user_id": 1
+  },
+  {
+    "id": 2,
+    "slug": "NOVA",
+    "name": "Nova Tech",
+    "owner_user_id": 2
+  }
+]

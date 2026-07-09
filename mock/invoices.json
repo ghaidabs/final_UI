@@ -1,0 +1,142 @@
+[
+  {
+    "id": 1,
+    "invoice_number": "ACME_F202605-001",
+    "date_issued": "2026-05-10T09:00:00",
+    "status": "paid",
+    "user_id": 1,
+    "company_id": 1,
+    "articles": [
+      {
+        "name": "Consultation IT",
+        "designation": "Consultation IT",
+        "description": "Analyse et audit du système existant",
+        "quantity": 3,
+        "unit_price": 500.0,
+        "total_ht": 1500.0,
+        "unit": "day"
+      }
+    ],
+    "commerce_inter_product_infos": [],
+    "client_name": "Ahmed Salem",
+    "client_address": "12 Rue de la République, Tunis",
+    "client_matricule_fiscale": "1234567A/P/M/000",
+    "currency": "TND",
+    "invoice_date": "2026-05-10T09:00:00",
+    "is_tva_applicable": true,
+    "is_stamp_applicable": false,
+    "total_ht": 1500.0,
+    "tva": 285.0,
+    "total_ttc": 1785.0,
+    "fret_fob": 0.0,
+    "fret_out": 0.0,
+    "terms_and_conditions": "Paiement à 30 jours",
+    "payment_method": "virement",
+    "display_discount": false
+  },
+  {
+    "id": 2,
+    "invoice_number": "ACME_F202606-001",
+    "date_issued": "2026-06-01T10:30:00",
+    "status": "validated",
+    "user_id": 1,
+    "company_id": 1,
+    "articles": [
+      {
+        "name": "Développement web",
+        "designation": "Développement web",
+        "description": "Développement du module facturation",
+        "quantity": 10,
+        "unit_price": 400.0,
+        "total_ht": 4000.0,
+        "unit": "day"
+      }
+    ],
+    "commerce_inter_product_infos": [],
+    "client_name": "Sarra Trabelsi",
+    "client_address": "45 Avenue Habib Bourguiba, Sfax",
+    "client_matricule_fiscale": "2345678B/P/M/000",
+    "currency": "TND",
+    "invoice_date": "2026-06-01T10:30:00",
+    "is_tva_applicable": true,
+    "is_stamp_applicable": true,
+    "total_ht": 4000.0,
+    "tva": 760.0,
+    "total_ttc": 4761.0,
+    "fret_fob": 0.0,
+    "fret_out": 0.0,
+    "terms_and_conditions": "Paiement à 15 jours",
+    "payment_method": "chèque",
+    "display_discount": false
+  },
+  {
+    "id": 3,
+    "invoice_number": "NOVA_F202606-001",
+    "date_issued": "2026-06-10T08:00:00",
+    "status": "validated",
+    "user_id": 2,
+    "company_id": 2,
+    "articles": [
+      {
+        "name": "Infrastructure cloud",
+        "designation": "Infrastructure cloud",
+        "description": "Mise en place serveurs AWS",
+        "quantity": 1,
+        "unit_price": 3500.0,
+        "total_ht": 3500.0,
+        "unit": "piece"
+      }
+    ],
+    "commerce_inter_product_infos": [],
+    "client_name": "Nour Gharbi",
+    "client_address": "3 Rue de Carthage, Tunis",
+    "client_matricule_fiscale": "4567890D/P/M/000",
+    "currency": "TND",
+    "invoice_date": "2026-06-10T08:00:00",
+    "is_tva_applicable": true,
+    "is_stamp_applicable": false,
+    "total_ht": 3500.0,
+    "tva": 665.0,
+    "total_ttc": 4165.0,
+    "fret_fob": 0.0,
+    "fret_out": 0.0,
+    "terms_and_conditions": null,
+    "payment_method": "virement",
+    "display_discount": false
+  },
+  {
+    "id": 4,
+    "invoice_number": "NOVA_F202606-002",
+    "date_issued": "2026-06-20T11:00:00",
+    "status": "draft",
+    "user_id": 2,
+    "company_id": 2,
+    "articles": [
+      {
+        "name": "Audit sécurité",
+        "designation": "Audit sécurité",
+        "description": "Audit complet infrastructure réseau",
+        "quantity": 5,
+        "unit_price": 600.0,
+        "total_ht": 3000.0,
+        "unit": "day"
+      }
+    ],
+    "commerce_inter_product_infos": [],
+    "client_name": "Yassine Dridi",
+    "client_address": "21 Avenue de la Liberté, Tunis",
+    "client_matricule_fiscale": "5678901E/P/M/000",
+    "currency": "EUR",
+    "invoice_date": "2026-06-20T11:00:00",
+    "is_tva_applicable": false,
+    "is_stamp_applicable": false,
+    "total_ht": 3000.0,
+    "tva": 0.0,
+    "total_ttc": 3000.0,
+    "fret_fob": 0.0,
+    "fret_out": 0.0,
+    "terms_and_conditions": null,
+    "payment_method": null,
+    "display_discount": false
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "email": "admin@acme.tn",
+    "role": "ADMIN",
+    "company_id": 1
+  },
+  {
+    "id": 2,
+    "email": "admin@nova.tn",
+    "role": "ADMIN",
+    "company_id": 2
+  },
+  {
+    "id": 3,
+    "email": "owner@platform.tn",
+    "role": "OWNER",
+    "company_id": 1
+  }
+]

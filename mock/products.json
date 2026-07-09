@@ -1,0 +1,47 @@
+[
+  {
+    "id": 1,
+    "code_product": "CONS-IT-001",
+    "company_id": 1,
+    "designation": "Consultation IT",
+    "carton_container_qty": null,
+    "pieces_per_parton": null,
+    "unit_price_cfr_per_carton": 0.0
+  },
+  {
+    "id": 2,
+    "code_product": "DEV-WEB-001",
+    "company_id": 1,
+    "designation": "Développement web",
+    "carton_container_qty": null,
+    "pieces_per_parton": null,
+    "unit_price_cfr_per_carton": 0.0
+  },
+  {
+    "id": 3,
+    "code_product": "FORM-001",
+    "company_id": 2,
+    "designation": "Formation",
+    "carton_container_qty": null,
+    "pieces_per_parton": null,
+    "unit_price_cfr_per_carton": 0.0
+  },
+  {
+    "id": 4,
+    "code_product": "AUDIT-001",
+    "company_id": 2,
+    "designation": "Audit technique",
+    "carton_container_qty": null,
+    "pieces_per_parton": null,
+    "unit_price_cfr_per_carton": 0.0
+  },
+  {
+    "id": 5,
+    "code_product": "SEC-001",
+    "company_id": 2,
+    "designation": "Audit sécurité",
+    "carton_container_qty": null,
+    "pieces_per_parton": null,
+    "unit_price_cfr_per_carton": 0.0
+  }
+]

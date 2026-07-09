@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "first_name": "Ahmed",
+    "last_name": "Salem",
+    "phone": "+21671000001",
+    "address": "12 Rue de la République, Tunis",
+    "email": "ahmed.salem@example.tn",
+    "mat_fiscale": "1234567A/P/M/000",
+    "company_id": 1
+  },
+  {
+    "id": 2,
+    "first_name": "Sarra",
+    "last_name": "Trabelsi",
+    "phone": "+21671000002",
+    "address": "45 Avenue Habib Bourguiba, Sfax",
+    "email": "sarra.trabelsi@example.tn",
+    "mat_fiscale": "2345678B/P/M/000",
+    "company_id": 1
+  },
+  {
+    "id": 3,
+    "first_name": "Karim",
+    "last_name": "Mzoughi",
+    "phone": "+21698000003",
+    "address": "7 Rue Ibn Khaldoun, Sousse",
+    "email": "karim.mzoughi@example.tn",
+    "mat_fiscale": "3456789C/P/M/000",
+    "company_id": 2
+  },
+  {
+    "id": 4,
+    "first_name": "Nour",
+    "last_name": "Gharbi",
+    "phone": "+21622000004",
+    "address": "3 Rue de Carthage, Tunis",
+    "email": "nour.gharbi@example.tn",
+    "mat_fiscale": "4567890D/P/M/000",
+    "company_id": 2
+  }
+]
