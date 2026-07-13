@@ -18,3 +18,4 @@ sentence-transformers
 pytest
 pytest-asyncio
 rapidfuzz
+elevenlabs

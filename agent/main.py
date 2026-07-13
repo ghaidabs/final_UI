@@ -1,9 +1,11 @@
 import asyncio
 import logging
+from typing import Optional
 from agent.session import SessionState, UserContext
 from agent.nlu import extract_intent_with_context
 from agent.dispatcher import dispatch, resume_awaiting_field
 from agent.stt import STTSession, TranscriptResult, annotate_low_confidence
+from agent.tts import TTSSession
 from api.mock_saas_client import MockSaasClient
 from mock.db import get_user_by_id, get_company_by_id
 from dotenv import load_dotenv
@@ -17,6 +19,57 @@ MOCK_USERS = {
     "2": 2,  # admin@nova.tn   / ADMIN / NOVA
     "3": 3,  # owner@platform.tn / OWNER / ACME
 }
+
+_tts_session: Optional[TTSSession] = None
+_tts_enabled = True
+_tts_init_failed = False
+
+
+def _get_tts_session() -> Optional[TTSSession]:
+    global _tts_session, _tts_init_failed
+    if _tts_init_failed:
+        return None
+    if _tts_session is None:
+        try:
+            _tts_session = TTSSession()
+        except RuntimeError as exc:
+            print(f"[tts] disabled: {exc}")
+            _tts_init_failed = True
+            return None
+    return _tts_session
+
+
+def _toggle_tts(enabled: bool) -> None:
+    global _tts_enabled
+    _tts_enabled = enabled
+    print(f"[tts] {'enabled' if enabled else 'disabled'}")
+
+def play_pcm(result: SynthesisResult) -> None:
+    if not result.audio_bytes:
+        return
+    try:
+        import sounddevice as sd
+        import numpy as np
+    except ImportError:
+        raise SystemExit(
+            "sounddevice and numpy are required to play audio. Install with: pip install sounddevice numpy"
+        )
+
+    audio_array = np.frombuffer(result.audio_bytes, dtype=np.int16)
+    sd.play(audio_array, samplerate=result.sample_rate, blocking=True)
+
+def _speak(text: str, language: str) -> None:
+    if not _tts_enabled or not text or not text.strip():
+        return
+    session = _get_tts_session()
+    if session is None:
+        return
+    try:
+        result = session.synthesize(text, language=language)
+        play_pcm(result)
+    except Exception as exc:
+        logger.exception("TTS playback failed")
+        print(f"[tts] error: {exc}")
 
 
 def _build_session(user_id: int) -> SessionState:
@@ -63,6 +116,7 @@ async def _run_pipeline(transcript: str, session: SessionState, saas: MockSaasCl
         resumed = await resume_awaiting_field(transcript, session, saas, language)
         if resumed is not None:
             _print_response(resumed)
+            _speak(resumed.spoken_text, language)
             return
 
     intent = extract_intent_with_context(transcript, session, language=language)
@@ -70,6 +124,7 @@ async def _run_pipeline(transcript: str, session: SessionState, saas: MockSaasCl
 
     resp = await dispatch(intent, saas, session)
     _print_response(resp)
+    _speak(resp.spoken_text, language)
 
 
 async def _voice_turn(session: SessionState, saas: MockSaasClient) -> None:
