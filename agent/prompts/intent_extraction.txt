@@ -15,7 +15,6 @@ intent = "create_invoice"
     {"product_name": string, "quantity": number, "unit_price": number or null, "unit": string or null}
   ],
   "currency": "TND",
-  "due_date": "YYYY-MM-DD" or null,
   "is_tva_applicable": boolean,
   "is_stamp_applicable": boolean,
   "payment_method": string or null,

@@ -9,6 +9,7 @@ from agent.normalizer import normalize_invoice_number
 from agent.fuzzy import find_fuzzy
 from rag.indexer import ensure_client_index, ensure_product_index
 from rag.retriever import find_similar
+import asyncio
 
 
 class MockSaasClient:
@@ -28,8 +29,8 @@ class MockSaasClient:
         if fuzzy:
             return fuzzy
 
-        ensure_client_index(self.company_id)
-        candidates = find_similar("client", self.company_id, name, top_k=3)
+        await asyncio.to_thread(ensure_client_index, self.company_id)
+        candidates = await asyncio.to_thread(find_similar, "client", self.company_id, name, 3)
         return [
             {**c, "_fuzzy_score": cand["score"]}
             for cand in candidates
@@ -47,9 +48,11 @@ class MockSaasClient:
 
         all_products = get_all_products(self.company_id, page=1, size=10_000)["items"]
         fuzzy = find_fuzzy(name, all_products, lambda p: p["designation"])
-    
-        ensure_product_index(self.company_id)
-        candidates = find_similar("product", self.company_id, name, top_k=3)
+        if fuzzy:
+            return fuzzy
+
+        await asyncio.to_thread(ensure_product_index, self.company_id)
+        candidates = await asyncio.to_thread(find_similar, "product", self.company_id, name, 3)
         return [
             {**p, "_fuzzy_score": cand["score"]}
             for cand in candidates
@@ -80,7 +83,6 @@ class MockSaasClient:
         is_stamp_applicable: bool = False,
         payment_method: str | None = None,
         terms_and_conditions: str | None = None,
-        due_date: str | None = None,
         ) -> dict:
             return create_invoice(
                 company_id=self.company_id,
@@ -92,7 +94,6 @@ class MockSaasClient:
                 is_stamp_applicable=is_stamp_applicable,
                 payment_method=payment_method,
                 terms_and_conditions=terms_and_conditions,
-                due_date=due_date,
             )
 
     async def build_invoice_draft(self, client: dict, line_items: list, **kwargs) -> dict:

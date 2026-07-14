@@ -127,7 +127,6 @@ def create_invoice(
     is_stamp_applicable: bool = False,
     payment_method: str | None = None,
     terms_and_conditions: str | None = None,
-    due_date: str | None = None,
     ) -> dict:
 
         invoice_number = _next_invoice_number(company_id)
@@ -152,7 +151,6 @@ def create_invoice(
             "client_matricule_fiscale": client["mat_fiscale"],
             "currency": currency,
             "invoice_date": now,
-            "due_date": due_date,
             "is_tva_applicable": is_tva_applicable,
             "is_stamp_applicable": is_stamp_applicable,
             "total_ht": total_ht,
@@ -179,7 +177,6 @@ def build_invoice_draft(
     is_stamp_applicable: bool = False,
     payment_method: str | None = None,
     terms_and_conditions: str | None = None,
-    due_date: str | None = None,
     ) -> dict:
         now = datetime.now().isoformat()
 
@@ -201,7 +198,6 @@ def build_invoice_draft(
             "client_matricule_fiscale": client["mat_fiscale"],
             "currency": currency,
             "invoice_date": now,
-            "due_date": due_date,
             "is_tva_applicable": is_tva_applicable,
             "is_stamp_applicable": is_stamp_applicable,
             "total_ht": total_ht,
