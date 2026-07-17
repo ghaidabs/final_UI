@@ -39,6 +39,7 @@ class ParticipantVoiceHandler:
         self._out_track = rtc.LocalAudioTrack.create_audio_track("assistant-voice", self._out_source)
         self._published = False
         self._reply_lock = asyncio.Lock()
+        self._agent_speaking = False
 
     async def start(self, track: rtc.Track) -> None:
         if not self._published:
@@ -65,6 +66,10 @@ class ParticipantVoiceHandler:
         logger.exception("STT error for %s: %s", self._participant.identity, exc)
 
     async def _on_transcript(self, result: TranscriptResult) -> None:
+        if self._agent_speaking:
+            logger.debug("Dropping transcript received during agent turn (no barge-in): %r", result.transcript)
+            return
+
         async with self._reply_lock:
             marked = annotate_low_confidence(result)
             language = result.language or "fr"
@@ -102,8 +107,9 @@ class ParticipantVoiceHandler:
     async def _speak(self, text: str, language: str) -> None:
         if not text or not text.strip():
             return
+        self._agent_speaking = True
         try:
-            result = self._tts.synthesize(text, language=language)
+            result = await asyncio.to_thread(self._tts.synthesize, text, language=language)
         except Exception:
             logger.exception("TTS synthesis failed")
             return
