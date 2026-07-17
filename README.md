@@ -4,8 +4,8 @@ A **bilingual (French / English) voice assistant** for invoicing SaaS platform.
 Users speak natural-language commands — *"Crée une facture pour Ahmed, 3 claviers à 45 dinars"* — and the agent extracts intents, resolves entities, and drives the invoicing API through a structured pipeline.
 
 > **Status — MVP / active development.**  
-> Core pipeline (STT → NLU → Dispatcher → Response) is functional.  
-> TTS, LiveKit integration, FastAPI server, and production SaaS client are scaffolded but not yet implemented.
+> Core pipeline (STT → NLU → Dispatcher → Response → TTS) is functional.  
+> LiveKit integration, FastAPI server, and production SaaS client are scaffolded but not yet implemented.
 
 ---
 
@@ -50,7 +50,7 @@ Users speak natural-language commands — *"Crée une facture pour Ahmed, 3 clav
        ▼                                 ▼                        │
 ┌──────────┐                    ┌──────────────┐          ┌───────┴───────┐
 │   TTS    │                    │  SaaS Client │          │  Normalizer   │
-│  (TODO)  │                    │  (mock / real)│         │  Fuzzy / RAG  │
+│(ElevenLb)│                    │  (mock / real)│         │  Fuzzy / RAG  │
 └──────────┘                    └──────────────┘          └───────────────┘
 ```
 
@@ -193,7 +193,7 @@ When the dispatcher is awaiting a unit price from the user, this function extrac
 
 | Intent | Entities extracted |
 |--------|-------------------|
-| `create_invoice` | `client_name`, `articles[]` (product, qty, price, unit), `currency`, `due_date`, TVA/stamp flags, payment method |
+| `create_invoice` | `client_name`, `articles[]` (product, qty, price, unit), `currency`, TVA/stamp flags, payment method |
 | `lookup_client` | `client_name` |
 | `check_invoice` | `invoice_number` or `client_name` |
 | `add_line_item` | `invoice_number`, `product_name`, `quantity`, `unit_price`, `unit` |
@@ -320,9 +320,14 @@ All templates produce **natural language text** in either French or English, det
 
 | File | Description |
 |------|-------------|
-| `agent/tts.py` | **Placeholder** — not yet implemented |
+| `agent/tts.py` | `TTSSession` class wrapping the **ElevenLabs** streaming TTS API |
 
-Will convert the `VoiceResponse.spoken_text` back to audio for the user. Planned integration via LiveKit plugins.
+**Key details:**
+
+- **Provider:** ElevenLabs (`elevenlabs` Python SDK).
+- **Language awareness:** accepts an optional `language` parameter from the pipeline. Normalizes it to ISO codes (`"fr"`, `"en"`) and passes it to the ElevenLabs API so the voice model adapts its pronunciation.
+- **Streaming synthesis:** uses `text_to_speech.stream()` to receive audio chunks incrementally and buffers them into a single `SynthesisResult`.
+- **Playback:** `play_pcm()` in `main.py` decodes the PCM buffer into a NumPy int16 array and plays it via `sounddevice.play(blocking=True)`.
 
 ---
 
@@ -407,6 +412,9 @@ The `server/` directory is scaffolded for a **FastAPI** application that will ex
 |----------|-------------|
 | `DEEPGRAM_API_KEY` | Deepgram API key for Nova-3 streaming |
 | `GROQ_API_KEY` | Groq API key for LLM intent extraction |
+| `ELEVENLABS_API_KEY` | ElevenLabs API key for TTS |
+| `ELEVENLABS_MODEL_ID` | ElevenLabs model ID |
+| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID |
 | `HF_TOKEN` | Hugging Face token for gated embedding models |
 | `QDRANT_ENDPOINT` | Qdrant server URL |
 | `QDRANT_API_KEY` | Qdrant API key |

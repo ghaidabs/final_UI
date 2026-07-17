@@ -1,8 +1,10 @@
 import os
+import threading
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
 from rag.embeddings import embed
 from dotenv import load_dotenv
+from mock.db import get_all_clients, get_all_products
 
 load_dotenv()
 
@@ -12,6 +14,8 @@ QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY")
 
 _qdrant_client: QdrantClient | None = None
 _ensured_collections: set[str] = set()
+_indexed_once: set[tuple[str, int]] = set()
+_index_lock = threading.Lock() 
 
 
 def get_qdrant() -> QdrantClient:
@@ -27,6 +31,13 @@ def get_qdrant() -> QdrantClient:
 
 def collection_name(entity_type: str, company_id: int) -> str:
     return f"{entity_type}s_{company_id}"
+
+
+def _remote_point_count(name: str) -> int | None:
+    try:
+        return get_qdrant().get_collection(name).points_count
+    except Exception:
+        return None
 
 
 def _ensure_collection(name: str, vector_size: int) -> None:
@@ -59,13 +70,39 @@ def index_entities(entity_type: str, company_id: int, entities: list[dict], text
     )
 
 
-def ensure_client_index(company_id: int) -> None:
-    from mock.db import get_all_clients
-    clients = get_all_clients(company_id, page=1, size=10_000)["items"]
-    index_entities("client", company_id, clients, lambda c: f"{c['first_name']} {c['last_name']}")
+def _ensure_index(entity_type: str, company_id: int, fetch_entities, text_fn, force: bool) -> None:
+    key = (entity_type, company_id)
+    if key in _indexed_once and not force:
+        return
+
+    with _index_lock:
+        if key in _indexed_once and not force:  # another concurrent thread may have just finished
+            return
+
+        entities = fetch_entities(company_id, page=1, size=10_000)["items"]
+        name = collection_name(entity_type, company_id)
+
+        if not force:
+            remote_count = _remote_point_count(name)
+            if remote_count is not None and remote_count == len(entities):
+                # Already indexed from a previous run
+                _ensured_collections.add(name)
+                _indexed_once.add(key)
+                return
+
+        index_entities(entity_type, company_id, entities, text_fn)
+        _indexed_once.add(key)
 
 
-def ensure_product_index(company_id: int) -> None:
-    from mock.db import get_all_products
-    products = get_all_products(company_id, page=1, size=10_000)["items"]
-    index_entities("product", company_id, products, lambda p: p["designation"])
+def ensure_client_index(company_id: int, force: bool = False) -> None:
+    _ensure_index(
+        "client", company_id, get_all_clients,
+        lambda c: f"{c['first_name']} {c['last_name']}", force,
+    )
+
+
+def ensure_product_index(company_id: int, force: bool = False) -> None:
+    _ensure_index(
+        "product", company_id, get_all_products,
+        lambda p: p["designation"], force,
+    )

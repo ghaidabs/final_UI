@@ -2,7 +2,8 @@ from pydantic import BaseModel, model_validator
 from typing import Optional, Union
 
 class VoiceResponse(BaseModel):
-    spoken_text: str                       
+    spoken_text: str
+    display_text: Optional[str] = None                     
     success: bool = True
     error: Optional[str] = None             
     clarification_question: Optional[str] = None  

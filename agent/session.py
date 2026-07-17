@@ -15,7 +15,8 @@ class SessionState:
     pending_line_item: Optional[dict] = None
     pending_transcript: Optional[str] = None
     pending_disambiguation: Optional[dict] = None
-    pending_confirmation: bool = False 
+    pending_confirmation: bool = False
+    pending_resolved_client: Optional[dict] = None
     awaiting_field: Optional[str] = None       
     awaiting_intent: Optional[Any] = None   
     awaiting_article_indices: Optional[list[int]] = None

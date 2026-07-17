@@ -34,7 +34,6 @@ class CreateInvoiceIntent(BaseIntent):
     intent: Literal[IntentType.CREATE_INVOICE]
     client_name: str
     articles: list[LineItemInput]
-    due_date: Optional[str] = None
     currency: str = "TND"
     is_tva_applicable: bool = False
     is_stamp_applicable: bool = False
