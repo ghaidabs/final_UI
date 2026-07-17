@@ -1,6 +1,5 @@
 livekit-agents
-livekit-plugins-deepgram
-livekit-plugins-groq
+livekit-api
 groq
 qdrant-client
 fastapi

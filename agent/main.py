@@ -2,15 +2,15 @@ import asyncio
 import logging
 import threading
 from typing import Optional
-from agent.session import SessionState, UserContext
-from agent.nlu import extract_intent_with_context
-from agent.dispatcher import dispatch, resume_awaiting_field
-from agent.stt import STTSession, TranscriptResult, annotate_low_confidence
-from agent.tts import TTSSession
+from agent.core.session import SessionState
+from agent.speech.stt import STTSession, TranscriptResult, annotate_low_confidence
+from agent.speech.tts import TTSSession, SynthesisResult
+from agent.core.pipeline import run_turn
+from agent.core.user_context import build_session_for_user
 from api.mock_saas_client import MockSaasClient
 from rag.embeddings import _model
 from rag.indexer import ensure_client_index, ensure_product_index
-from mock.db import get_user_by_id, get_company_by_id, _companies
+from mock.db import _companies
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -88,23 +88,6 @@ def _speak(text: str, language: str) -> None:
         print(f"[tts] error: {exc}")
 
 
-def _build_session(user_id: int) -> SessionState:
-    user_row = get_user_by_id(user_id)
-    if not user_row:
-        raise ValueError(f"No mock user with id {user_id}")
-    company = get_company_by_id(user_row["company_id"])
-    if not company:
-        raise ValueError(f"No mock company with id {user_row['company_id']}")
-
-    ctx = UserContext(
-        user_id=user_row["id"],
-        company_id=user_row["company_id"],
-        role=user_row["role"],
-        company_slug=company["slug"],
-    )
-    return SessionState(user=ctx)
-
-
 def _select_user() -> int:
     print("Select a mock user to test as:")
     print("  1) admin@acme.tn     (ADMIN, ACME)")
@@ -132,17 +115,7 @@ def _print_response(resp) -> None:
 
 
 async def _run_pipeline(transcript: str, session: SessionState, saas: MockSaasClient, language: str = "fr") -> None:
-    if session.awaiting_field:
-        resumed = await resume_awaiting_field(transcript, session, saas, language)
-        if resumed is not None:
-            _print_response(resumed)
-            _speak(resumed.spoken_text, language)
-            return
-
-    intent = extract_intent_with_context(transcript, session, language=language)
-    print(f"   [intent: {intent.intent}  confidence={intent.confidence}]")
-
-    resp = await dispatch(intent, saas, session)
+    resp = await run_turn(transcript, session, saas, language=language)
     _print_response(resp)
     _speak(resp.spoken_text, language)
 
@@ -211,7 +184,7 @@ async def _voice_turn(session: SessionState, saas: MockSaasClient) -> None:
 
 async def repl() -> None:
     user_id = _select_user()
-    session = _build_session(user_id)
+    session = build_session_for_user(user_id)
     saas = MockSaasClient(company_id=session.user.company_id, user_id=session.user.user_id, company_slug=session.user.company_slug)
 
     print(
@@ -235,7 +208,7 @@ async def repl() -> None:
             return
         if transcript.lower() == "switch":
             user_id = _select_user()
-            session = _build_session(user_id)
+            session = build_session_for_user(user_id)
             saas = MockSaasClient(company_id=session.user.company_id, user_id=session.user.user_id, company_slug=session.user.company_slug)
             print(f"Switched to user_id={session.user.user_id} company={session.user.company_slug}\n")
             continue

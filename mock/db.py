@@ -6,7 +6,7 @@ from datetime import datetime
 DATA_DIR = Path(__file__).parent
 
 def _load(filename):
-    with open(DATA_DIR / filename, encoding="utf-8") as f:
+    with open(DATA_DIR / "data" / filename, encoding="utf-8") as f:
         return json.load(f)
 
 _clients   = {c["id"]: c for c in _load("clients.json")}

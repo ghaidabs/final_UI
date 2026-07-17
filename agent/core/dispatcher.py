@@ -10,9 +10,9 @@ from schemas.intents import (
     UnknownIntent,
 )
 from schemas.responses import VoiceResponse
-from agent.session import SessionState
-from agent.normalizer import normalize_invoice_number
-from agent.nlu import extract_price_only
+from agent.core.session import SessionState
+from agent.nlp.normalizer import normalize_invoice_number
+from agent.nlp.nlu import extract_price_only
 from api.mock_saas_client import MockSaasClient
 from templates.invoice import (
     build_invoice_draft_spoken,

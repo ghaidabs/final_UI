@@ -1,8 +1,8 @@
-from agent.session import SessionState
+from agent.core.session import SessionState
 import json
 from pathlib import Path
 from groq import Groq
-from agent.validator import redact_pii 
+from agent.nlp.validator import redact_pii 
 from schemas.intents import (
     IntentType,
     CreateInvoiceIntent,
@@ -17,7 +17,7 @@ from schemas.intents import (
 )
 import re
 import logging
-from agent.normalizer import normalize_invoice_number
+from agent.nlp.normalizer import normalize_invoice_number
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,7 +25,7 @@ load_dotenv()
 #logging.basicConfig(level=logging.INFO)
 #logger = logging.getLogger(__name__)
 
-PROMPT_PATH = Path(__file__).parent / "prompts" / "intent_extraction.txt"
+PROMPT_PATH = Path(__file__).parent.parent /"prompts" / "intent_extraction.txt"
 SYSTEM_PROMPT = PROMPT_PATH.read_text()
 
 client = Groq()  
