@@ -759,6 +759,21 @@ async def _handle_cancel(session: SessionState, saas: MockSaasClient, language: 
         spoken_text=t("draft_discarded", language),
     )
 
+def build_button_intent(action: str, language: str = "fr"):
+    # Synthetic Confirm/Cancel intent for UI button clicks, bypasses NLU
+    
+    action = (action or "").lower()
+    if action not in ("confirm", "cancel"):
+        raise ValueError(f"Unsupported button action: {action!r}")
+
+    intent_cls = ConfirmIntent if action == "confirm" else CancelIntent
+    intent_type = IntentType.CONFIRM if action == "confirm" else IntentType.CANCEL
+
+    return intent_cls(
+        intent=intent_type, confidence=1.0, low_confidence_fields=[],
+        raw_transcript="", language=language,
+    )
+
 def _clarification_prompt(intent) -> str:
     language = getattr(intent, "language", "en")
 

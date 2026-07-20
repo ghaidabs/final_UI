@@ -4,7 +4,7 @@ from fastapi import Header, HTTPException, status
 from mock.db import get_company_by_id
 
 SAAS_JWT_SECRET = os.environ.get("SAAS_JWT_SECRET")
-SAAS_JWT_ALGORITHM = "HS256"
+SAAS_JWT_ALGORITHM = os.environ.get("SAAS_JWT_ALGORITHM")
 
 
 class AuthenticatedUser:

@@ -1,5 +1,6 @@
 livekit-agents
 livekit-api
+livekit-client
 groq
 qdrant-client
 fastapi

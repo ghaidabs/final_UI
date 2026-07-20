@@ -11,6 +11,7 @@ from agent.speech.tts import TTSSession
 from agent.core.pipeline import run_turn
 from agent.core.user_context import build_session_for_user
 from agent.core.session import SessionState
+from agent.core.dispatcher import dispatch, build_button_intent
 from api.mock_saas_client import MockSaasClient
 
 load_dotenv()
@@ -127,6 +128,26 @@ class ParticipantVoiceHandler:
             )
             await self._out_source.capture_frame(frame)
 
+    async def handle_client_action(self, payload: dict) -> None:
+        # Handle a button-triggered confirm/cancel from the frontend
+        
+        action = (payload.get("action") or "").strip().lower()
+        if action not in ("confirm", "cancel"):
+            logger.warning("Ignoring unknown client action: %r", payload)
+            return
+
+        language = payload.get("language") or "fr"
+        
+        try:
+            intent = build_button_intent(action, language=language)
+        except ValueError:
+            logger.warning("Ignoring unknown client action: %r", payload)
+            return
+        async with self._reply_lock:
+            resp = await dispatch(intent, self._saas, self._session)
+            await self._publish_text(resp, language)
+            await self._speak(resp.spoken_text, language)
+
 
 def _parse_user_id(participant: rtc.RemoteParticipant) -> int:
     if participant.metadata:
@@ -156,6 +177,26 @@ async def entrypoint(ctx: JobContext) -> None:
         await handler.start(track)
         logger.info("Voice session ready for %s (company=%s role=%s)",
                     participant.identity, session.user.company_slug, session.user.role)
+
+    def _on_data_received(data: rtc.DataPacket) -> None:
+            participant = data.participant
+            if participant is None:
+                return
+            handler = handlers.get(participant.identity)
+            if handler is None:
+                return
+            try:
+                payload = json.loads(data.data.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("Malformed data packet from %s", participant.identity)
+                return
+            if payload.get("type") != "user_action":
+                return
+            asyncio.create_task(handler.handle_client_action(payload))
+
+    @ctx.room.on("data_received")
+    def on_data_received(data: rtc.DataPacket):
+        _on_data_received(data)
 
     @ctx.room.on("track_subscribed")
     def on_track_subscribed(track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
