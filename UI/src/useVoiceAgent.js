@@ -70,14 +70,19 @@ export function useVoiceAgent() {
         });
 
       await room.connect(url, token);
-      await room.localParticipant.setMicrophoneEnabled(true);
-      setMicEnabled(true);
       setStatus('connected');
     } catch (err) {
       console.error(err);
       setError(err.message || String(err));
       setStatus('error');
     }
+  }, []);
+
+  const setMicActive = useCallback(async (active) => {
+    const room = roomRef.current;
+    if (!room) return;
+    await room.localParticipant.setMicrophoneEnabled(active);
+    setMicEnabled(active);
   }, []);
 
   const sendAction = useCallback(
@@ -105,6 +110,6 @@ export function useVoiceAgent() {
 
   return {
     status, error, response, micEnabled, agentSpeaking,
-    audioContainerRef, connect, disconnect, sendAction, toggleMic,
+    audioContainerRef, connect, disconnect, sendAction, toggleMic, setMicActive,
   };
 }

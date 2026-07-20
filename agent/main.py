@@ -7,6 +7,7 @@ from agent.speech.stt import STTSession, TranscriptResult, annotate_low_confiden
 from agent.speech.tts import TTSSession, SynthesisResult
 from agent.core.pipeline import run_turn
 from agent.core.user_context import build_session_for_user
+from agent.core.warmup import start_warmup_thread
 from api.mock_saas_client import MockSaasClient
 from rag.embeddings import _model
 from rag.indexer import ensure_client_index, ensure_product_index
@@ -27,19 +28,7 @@ _tts_session: Optional[TTSSession] = None
 _tts_enabled = True
 _tts_init_failed = False
 
-def _warm_up_rag() -> None:
-    try:
-        _model()
-        for company in _companies.values():
-            ensure_client_index(company["id"])
-            ensure_product_index(company["id"])
-    except Exception:
-        logger.exception(
-            "RAG warm-up failed to complete; the first RAG fallback lookup "
-            "may be slower until this is resolved."
-        )
-
-threading.Thread(target=_warm_up_rag, daemon=True, name="rag-warmup").start()
+start_warmup_thread()
 
 def _get_tts_session() -> Optional[TTSSession]:
     global _tts_session, _tts_init_failed

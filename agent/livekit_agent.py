@@ -12,6 +12,7 @@ from agent.core.pipeline import run_turn
 from agent.core.user_context import build_session_for_user
 from agent.core.session import SessionState
 from agent.core.dispatcher import dispatch, build_button_intent
+from agent.core.warmup import start_warmup_thread
 from api.mock_saas_client import MockSaasClient
 
 load_dotenv()
@@ -22,6 +23,7 @@ TTS_SAMPLE_RATE = 24_000
 TTS_FRAME_MS = 20
 TTS_BYTES_PER_FRAME = int(TTS_SAMPLE_RATE * TTS_FRAME_MS / 1000) * 2  # 16-bit mono
 
+start_warmup_thread()
 
 class ParticipantVoiceHandler:
     def __init__(self, ctx: JobContext, participant: rtc.RemoteParticipant, session: SessionState):
@@ -84,7 +86,7 @@ class ParticipantVoiceHandler:
             await self._speak(resp.spoken_text, language)
 
     async def _publish_text(self, resp, language: str) -> None:
-        """Optional: pushes the structured response to the frontend over the
+        """Pushes the structured response to the frontend over the
         room's data channel, so a UI can show text/confirmation state
         alongside the spoken audio."""
 
@@ -95,6 +97,7 @@ class ParticipantVoiceHandler:
             "clarification_question": resp.clarification_question,
             "error": resp.error,
             "display_data": resp.display_data,
+            "draft_payload": resp.draft_payload,
             "language": language,
         }
         try:

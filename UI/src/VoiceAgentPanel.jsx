@@ -41,7 +41,7 @@ export default function VoiceAgentPanel() {
   const [devToken, setDevToken] = useState('');
   const {
     status, error, response, micEnabled, agentSpeaking,
-    audioContainerRef, connect, disconnect, sendAction, toggleMic,
+    audioContainerRef, connect, disconnect, sendAction, toggleMic, setMicActive,
   } = useVoiceAgent();
 
   const connected = status === 'connected';
@@ -56,6 +56,16 @@ export default function VoiceAgentPanel() {
             {status}
           </p>
         </div>
+        <button
+          className="va-btn va-btn-mint"
+          onMouseDown={() => setMicActive(true)}
+          onMouseUp={() => setMicActive(false)}
+          onMouseLeave={() => micEnabled && setMicActive(false)}
+          onTouchStart={() => setMicActive(true)}
+          onTouchEnd={() => setMicActive(false)}
+        >
+          🎙 Hold to talk
+        </button>
         {agentSpeaking && (
           <span className="va-speaking-badge">
             <span className="va-speaking-dot" />
@@ -101,11 +111,11 @@ export default function VoiceAgentPanel() {
           <>
             <div className="va-response">{response.display_text}</div>
 
-            {response.clarification_question && (
+            {response.clarification_question && response.clarification_question !== response.display_text && (
               <div className="va-clarification">{response.clarification_question}</div>
             )}
 
-            <DisplayData data={response.display_data} />
+            <DisplayData data={response.display_data ?? response.draft_payload} />
 
             {response.requires_confirmation && (
               <div className="va-confirm-row">

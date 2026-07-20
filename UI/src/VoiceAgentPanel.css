@@ -1,3 +1,12 @@
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--va-bg, #f6f7f9);
+}
+
 .va-panel {
   --va-teal-900: #0e4f45;
   --va-teal-800: #0f6d5f;
