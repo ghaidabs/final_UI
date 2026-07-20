@@ -52,7 +52,11 @@ class ParticipantVoiceHandler:
             )
             self._published = True
 
-        self._stt = STTSession(on_transcript=self._on_transcript, on_error=self._on_stt_error)
+        self._stt = STTSession(
+            on_transcript=self._on_transcript,
+            on_error=self._on_stt_error,
+            on_speaking_state_change=self._on_vad_state,  
+        )
         await self._stt.start()
 
         audio_stream = rtc.AudioStream(track, sample_rate=16000, num_channels=1)
@@ -77,20 +81,21 @@ class ParticipantVoiceHandler:
             marked = annotate_low_confidence(result)
             language = result.language or "fr"
 
+            await self._publish_event({"type": "transcript_final", "text": result.transcript})
+            await self._publish_event({"type": "processing", "active": True})
+
             logger.info("[%s] transcript: %r (confidence=%.2f)",
                         self._participant.identity, result.transcript, result.confidence)
 
             resp = await run_turn(marked, self._session, self._saas, language=language)
 
+            await self._publish_event({"type": "processing", "active": False})
             await self._publish_text(resp, language)
             await self._speak(resp.spoken_text, language)
 
     async def _publish_text(self, resp, language: str) -> None:
-        """Pushes the structured response to the frontend over the
-        room's data channel, so a UI can show text/confirmation state
-        alongside the spoken audio."""
-
         payload = {
+            "type": "response",
             "display_text": resp.display_text or resp.spoken_text,
             "success": resp.success,
             "requires_confirmation": resp.requires_confirmation,
@@ -100,36 +105,42 @@ class ParticipantVoiceHandler:
             "draft_payload": resp.draft_payload,
             "language": language,
         }
+        await self._publish_event(payload)
+
+    async def _publish_event(self, payload: dict) -> None:
         try:
             await self._ctx.room.local_participant.publish_data(
                 json.dumps(payload, default=str).encode("utf-8"),
                 reliable=True,
             )
         except Exception:
-            logger.exception("Failed to publish response data to room")
+            logger.exception("Failed to publish event: %s", payload.get("type"))
+
+    async def _on_vad_state(self, speaking: bool) -> None:
+        await self._publish_event({"type": "vad_state", "speaking": speaking})
 
     async def _speak(self, text: str, language: str) -> None:
         if not text or not text.strip():
             return
         self._agent_speaking = True
+        await self._publish_event({"type": "agent_speaking", "speaking": True})
         try:
             result = await asyncio.to_thread(self._tts.synthesize, text, language=language)
+            pcm = result.audio_bytes
+            for offset in range(0, len(pcm), TTS_BYTES_PER_FRAME):
+                chunk = pcm[offset:offset + TTS_BYTES_PER_FRAME]
+                if len(chunk) < TTS_BYTES_PER_FRAME:
+                    chunk = chunk + b"\x00" * (TTS_BYTES_PER_FRAME - len(chunk))
+                frame = rtc.AudioFrame(
+                    data=chunk, sample_rate=TTS_SAMPLE_RATE,
+                    num_channels=1, samples_per_channel=len(chunk) // 2,
+                )
+                await self._out_source.capture_frame(frame)
         except Exception:
             logger.exception("TTS synthesis failed")
-            return
-
-        pcm = result.audio_bytes
-        for offset in range(0, len(pcm), TTS_BYTES_PER_FRAME):
-            chunk = pcm[offset:offset + TTS_BYTES_PER_FRAME]
-            if len(chunk) < TTS_BYTES_PER_FRAME:
-                chunk = chunk + b"\x00" * (TTS_BYTES_PER_FRAME - len(chunk))
-            frame = rtc.AudioFrame(
-                data=chunk,
-                sample_rate=TTS_SAMPLE_RATE,
-                num_channels=1,
-                samples_per_channel=len(chunk) // 2,
-            )
-            await self._out_source.capture_frame(frame)
+        finally:
+            self._agent_speaking = False                                         
+            await self._publish_event({"type": "agent_speaking", "speaking": False})
 
     async def handle_client_action(self, payload: dict) -> None:
         # Handle a button-triggered confirm/cancel from the frontend

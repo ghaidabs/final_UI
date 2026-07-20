@@ -7,13 +7,13 @@ def build_invoice_draft_spoken(draft: dict, language: str = "fr") -> str:
         client_name = draft.get("client_name", "the client")
         return (
             f"Here's the draft invoice for {client_name}. "
-            f"Say 'confirm' to create it, or 'cancel' to discard it."
+            f"Please 'confirm' to create it, or 'cancel' to discard it."
         )
 
     client_name = draft.get("client_name", "le client")
     return (
         f"Voici le brouillon de facture pour {client_name}. "
-        f"Dites 'confirme' pour la créer, ou 'annule' pour l'abandonner."
+        f"Merci de 'confirmer' pour la créer, ou 'annuler' pour l'abandonner."
     )
 
 
@@ -68,12 +68,12 @@ def build_line_item_confirmation_spoken(invoice_number: str, designation: str, q
     if language == "en":
         return (
             f"We will add {qty_str} {designation} at {unit_price_str} each "
-            f"to invoice {number}? Say 'confirm' or 'cancel'."
+            f"to invoice {number}? Please 'confirm' or 'cancel'."
         )
 
     return (
         f"On va ajouter {qty_str} {designation} à {unit_price_str} l'unité "
-        f"à la facture {number} ? Dites 'confirme' ou 'annule'."
+        f"à la facture {number} ? Merci de 'confirmer' ou 'annuler'."
     )
 
 

@@ -1,17 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { Room, RoomEvent, Track } from 'livekit-client';
 
 const TOKEN_ENDPOINT = import.meta.env.VITE_LIVEKIT_TOKEN_URL;
+
+const initialLiveState = {
+  micHeld: false,
+  vadSpeaking: false,
+  processing: false,
+  agentSpeaking: false,
+  finalTranscript: '',
+  response: null,
+};
 
 export function useVoiceAgent() {
   const roomRef = useRef(null);
   const audioContainerRef = useRef(null);
 
-  const [status, setStatus] = useState('idle'); 
-  const [micEnabled, setMicEnabled] = useState(false);
-  const [agentSpeaking, setAgentSpeaking] = useState(false);
-  const [response, setResponse] = useState(null); // last VoiceResponse-shaped payload
+  const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
+  const [live, setLive] = useState(initialLiveState);
+
+  const patchLive = useCallback((patch) => {
+    setLive((prev) => ({ ...prev, ...patch }));
+  }, []);
 
   const disconnect = useCallback(async () => {
     if (roomRef.current) {
@@ -19,8 +30,7 @@ export function useVoiceAgent() {
       roomRef.current = null;
     }
     setStatus('disconnected');
-    setMicEnabled(false);
-    setAgentSpeaking(false);
+    setLive(initialLiveState);
   }, []);
 
   const connect = useCallback(async (devToken) => {
@@ -30,6 +40,7 @@ export function useVoiceAgent() {
     }
     setStatus('connecting');
     setError(null);
+    setLive(initialLiveState);
 
     try {
       const tokenRes = await fetch(TOKEN_ENDPOINT, {
@@ -43,30 +54,47 @@ export function useVoiceAgent() {
       roomRef.current = room;
 
       room
-        .on(RoomEvent.TrackSubscribed, (track, publication) => {
+        .on(RoomEvent.TrackSubscribed, (track) => {
           if (track.kind === Track.Kind.Audio) {
             const el = track.attach();
             el.autoplay = true;
             audioContainerRef.current?.appendChild(el);
-            if (publication.trackName === 'assistant-voice') setAgentSpeaking(true);
           }
         })
-        .on(RoomEvent.TrackUnsubscribed, (track, publication) => {
+        .on(RoomEvent.TrackUnsubscribed, (track) => {
           track.detach().forEach((el) => el.remove());
-          if (track.kind === Track.Kind.Audio && publication.trackName === 'assistant-voice') {
-            setAgentSpeaking(false);
-          }
         })
         .on(RoomEvent.DataReceived, (payload) => {
+          let msg;
           try {
-            setResponse(JSON.parse(new TextDecoder().decode(payload)));
+            msg = JSON.parse(new TextDecoder().decode(payload));
           } catch {
             console.warn('Malformed data payload from agent');
+            return;
+          }
+          switch (msg.type) {
+            case 'vad_state':
+              patchLive({ vadSpeaking: msg.speaking });
+              break;
+            case 'transcript_final':
+              patchLive({ finalTranscript: msg.text });
+              break;
+            case 'processing':
+              patchLive({ processing: msg.active });
+              break;
+            case 'agent_speaking':
+              patchLive({ agentSpeaking: msg.speaking });
+              break;
+            case 'response':
+              patchLive({ response: msg });
+              break;
+            default:
+              break;
           }
         })
         .on(RoomEvent.Disconnected, () => {
           setStatus('disconnected');
-          setMicEnabled(false);
+          setLive(initialLiveState);
         });
 
       await room.connect(url, token);
@@ -76,40 +104,42 @@ export function useVoiceAgent() {
       setError(err.message || String(err));
       setStatus('error');
     }
-  }, []);
+  }, [patchLive]);
 
-  const setMicActive = useCallback(async (active) => {
+  const setMicHeld = useCallback(async (held) => {
     const room = roomRef.current;
-    if (!room) return;
-    await room.localParticipant.setMicrophoneEnabled(active);
-    setMicEnabled(active);
-  }, []);
+    if (!room || status !== 'connected') return;
+    await room.localParticipant.setMicrophoneEnabled(held);
+    patchLive({
+      micHeld: held,
+      ...(held ? { finalTranscript: '' } : { vadSpeaking: false }), 
+    });
+  }, [status, patchLive]);
 
-  const sendAction = useCallback(
-    (action) => {
-      const room = roomRef.current;
-      if (!room || status !== 'connected') return;
-      const payload = { type: 'user_action', action, language: response?.language || 'fr' };
-      room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(payload)), {
-        reliable: true,
-        topic: 'user_action',
-      });
-    },
-    [status, response]
-  );
-
-  const toggleMic = useCallback(async () => {
+  const sendAction = useCallback((action) => {
     const room = roomRef.current;
-    if (!room) return;
-    const next = !micEnabled;
-    await room.localParticipant.setMicrophoneEnabled(next);
-    setMicEnabled(next);
-  }, [micEnabled]);
+    if (!room || status !== 'connected') return;
+    const payload = { type: 'user_action', action, language: live.response?.language || 'fr' };
+    room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(payload)), {
+      reliable: true,
+      topic: 'user_action',
+    });
+  }, [status, live.response]);
+
+  const pipelineState = useMemo(() => {
+    if (live.agentSpeaking) return 'agent_speaking';
+    if (live.processing) return 'processing';
+    if (live.vadSpeaking) return 'speech_detected';
+    if (live.micHeld) return 'listening';
+    return 'idle';
+  }, [live]);
+
+  const canTalk = status === 'connected' && !live.processing && !live.agentSpeaking;
 
   useEffect(() => () => { roomRef.current?.disconnect(); }, []);
 
   return {
-    status, error, response, micEnabled, agentSpeaking,
-    audioContainerRef, connect, disconnect, sendAction, toggleMic, setMicActive,
+    status, error, live, pipelineState, canTalk,
+    audioContainerRef, connect, disconnect, sendAction, setMicHeld,
   };
 }
