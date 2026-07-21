@@ -9,10 +9,10 @@ from schemas.intents import (
     CancelIntent,
     UnknownIntent,
 )
-from schemas.responses import VoiceResponse
+from schemas.responses import VoiceResponse, TurnState
 from agent.core.session import SessionState
 from agent.nlp.normalizer import normalize_invoice_number
-from agent.nlp.nlu import extract_price_only
+from agent.nlp.nlu import extract_price_only, extract_intent
 from api.mock_saas_client import MockSaasClient
 from templates.invoice import (
     build_invoice_draft_spoken,
@@ -356,6 +356,7 @@ async def _finalize_invoice_draft(intent: CreateInvoiceIntent, client: dict, saa
         display_text=build_invoice_draft_display(draft, language=intent.language),
         requires_confirmation=True,
         draft_payload=draft,
+        display_data=draft,
     )
 
 
@@ -597,7 +598,17 @@ async def _resolve_disambiguation(session: SessionState, saas: MockSaasClient, l
         error="unhandled_disambiguation",
     )
 
-async def resume_awaiting_field(transcript: str, session: SessionState, saas: MockSaasClient, language: str):
+async def _try_escape_awaiting_field(transcript, session, saas, language):
+    classified = extract_intent(transcript, company_slug=saas.company_slug, language=language)
+    if isinstance(classified, CancelIntent) and classified.confidence >= 0.7:
+        session.awaiting_field = None
+        session.awaiting_intent = None
+        session.awaiting_article_indices = None
+        session.pending_transcript = None
+        return await _handle_cancel(session, saas, language)
+    return None
+
+async def resume_awaiting_field(transcript, session, saas, language):
     if session.awaiting_field not in ("unit_price", "invoice_number") or session.awaiting_intent is None:
         return None
 
@@ -606,12 +617,11 @@ async def resume_awaiting_field(transcript: str, session: SessionState, saas: Mo
         normalized = normalize_invoice_number(transcript, saas.company_slug) if saas.company_slug else None
 
         if normalized is None:
+            escape = await _try_escape_awaiting_field(transcript, session, saas, language)
+            if escape is not None:
+                return escape
             question = t("clarify_invoice_number", language)
-            return VoiceResponse(
-                success=False,
-                spoken_text=question,
-                clarification_question=question,
-            )
+            return VoiceResponse(success=False, spoken_text=question, clarification_question=question)
 
         intent.invoice_number = normalized
         session.awaiting_field = None
@@ -621,12 +631,11 @@ async def resume_awaiting_field(transcript: str, session: SessionState, saas: Mo
 
     price = extract_price_only(transcript)
     if price is None:
+        escape = await _try_escape_awaiting_field(transcript, session, saas, language)
+        if escape is not None:
+            return escape
         question = t("clarify_unit_price", language)
-        return VoiceResponse(
-            success=False,
-            spoken_text=question,
-            clarification_question=question,
-        )
+        return VoiceResponse(success=False, spoken_text=question, clarification_question=question)
 
     intent = session.awaiting_intent
 
@@ -731,32 +740,32 @@ async def _handle_cancel(session: SessionState, saas: MockSaasClient, language: 
     if session.pending_disambiguation:
         return await _resolve_disambiguation(session, saas, language, accepted=False)
 
+    had_in_progress_intent = session.awaiting_field is not None or session.awaiting_intent is not None
     session.awaiting_field = None
     session.pending_transcript = None
+    session.awaiting_intent = None
+    session.awaiting_article_indices = None
 
     if session.pending_line_item:
         session.pending_line_item = None
         session.pending_confirmation = False
         session.last_intent = None
-        return VoiceResponse(
-            success=True,
-            spoken_text=t("line_item_discarded", language),
-        )
+        return VoiceResponse(success=True, spoken_text=t("line_item_discarded", language))
 
-    if not session.pending_confirmation:
-        return VoiceResponse(
-            success=False,
-            spoken_text=t("no_pending_cancellation", language),
-            error="no_pending_confirmation",
-        )
+    if session.pending_confirmation and session.pending_draft:
+        session.pending_draft = None
+        session.pending_confirmation = False
+        session.last_intent = None
+        return VoiceResponse(success=True, spoken_text=t("draft_discarded", language))
 
-    session.pending_draft = None
-    session.pending_confirmation = False
-    session.last_intent = None
+    if had_in_progress_intent:
+        session.last_intent = None
+        return VoiceResponse(success=True, spoken_text=t("draft_discarded", language))
 
     return VoiceResponse(
-        success=True,
-        spoken_text=t("draft_discarded", language),
+        success=False,
+        spoken_text=t("no_pending_cancellation", language),
+        error="no_pending_confirmation",
     )
 
 def build_button_intent(action: str, language: str = "fr"):
@@ -797,3 +806,19 @@ def _clarification_prompt(intent) -> str:
         return t("clarify_articles", language)
 
     return t("clarify_generic", language)
+
+
+def attach_turn_state(resp: VoiceResponse, session: SessionState) -> VoiceResponse:
+    if session.pending_disambiguation:
+        state = TurnState.DISAMBIGUATING
+    elif session.pending_line_item or session.pending_confirmation:
+        state = TurnState.CONFIRMING
+    elif session.awaiting_field:
+        state = TurnState.COLLECTING
+    elif resp.error:
+        state = TurnState.ERROR
+    elif resp.success:
+        state = TurnState.COMPLETED
+    else:
+        state = TurnState.IDLE
+    return resp.model_copy(update={"turn_state": state})

@@ -43,6 +43,7 @@ class ParticipantVoiceHandler:
         self._published = False
         self._reply_lock = asyncio.Lock()
         self._agent_speaking = False
+        self._barge_in_requested = False
 
     async def start(self, track: rtc.Track) -> None:
         if not self._published:
@@ -69,65 +70,19 @@ class ParticipantVoiceHandler:
         if self._stt:
             await self._stt.finish()
 
-    async def _on_stt_error(self, exc: Exception) -> None:
-        logger.exception("STT error for %s: %s", self._participant.identity, exc)
-
-    async def _on_transcript(self, result: TranscriptResult) -> None:
-        if self._agent_speaking:
-            logger.debug("Dropping transcript received during agent turn (no barge-in): %r", result.transcript)
-            return
-
-        async with self._reply_lock:
-            marked = annotate_low_confidence(result)
-            language = result.language or "fr"
-
-            await self._publish_event({"type": "transcript_final", "text": result.transcript})
-            await self._publish_event({"type": "processing", "active": True})
-
-            logger.info("[%s] transcript: %r (confidence=%.2f)",
-                        self._participant.identity, result.transcript, result.confidence)
-
-            resp = await run_turn(marked, self._session, self._saas, language=language)
-
-            await self._publish_event({"type": "processing", "active": False})
-            await self._publish_text(resp, language)
-            await self._speak(resp.spoken_text, language)
-
-    async def _publish_text(self, resp, language: str) -> None:
-        payload = {
-            "type": "response",
-            "display_text": resp.display_text or resp.spoken_text,
-            "success": resp.success,
-            "requires_confirmation": resp.requires_confirmation,
-            "clarification_question": resp.clarification_question,
-            "error": resp.error,
-            "display_data": resp.display_data,
-            "draft_payload": resp.draft_payload,
-            "language": language,
-        }
-        await self._publish_event(payload)
-
-    async def _publish_event(self, payload: dict) -> None:
-        try:
-            await self._ctx.room.local_participant.publish_data(
-                json.dumps(payload, default=str).encode("utf-8"),
-                reliable=True,
-            )
-        except Exception:
-            logger.exception("Failed to publish event: %s", payload.get("type"))
-
-    async def _on_vad_state(self, speaking: bool) -> None:
-        await self._publish_event({"type": "vad_state", "speaking": speaking})
-
     async def _speak(self, text: str, language: str) -> None:
         if not text or not text.strip():
             return
         self._agent_speaking = True
+        self._barge_in_requested = False
         await self._publish_event({"type": "agent_speaking", "speaking": True})
         try:
             result = await asyncio.to_thread(self._tts.synthesize, text, language=language)
             pcm = result.audio_bytes
             for offset in range(0, len(pcm), TTS_BYTES_PER_FRAME):
+                if self._barge_in_requested:
+                    logger.info("Barge-in: stopping TTS playback")
+                    break
                 chunk = pcm[offset:offset + TTS_BYTES_PER_FRAME]
                 if len(chunk) < TTS_BYTES_PER_FRAME:
                     chunk = chunk + b"\x00" * (TTS_BYTES_PER_FRAME - len(chunk))
@@ -143,9 +98,15 @@ class ParticipantVoiceHandler:
             await self._publish_event({"type": "agent_speaking", "speaking": False})
 
     async def handle_client_action(self, payload: dict) -> None:
-        # Handle a button-triggered confirm/cancel from the frontend
+        # Handle a button-triggered confirm/cancel/barge-in from the frontend
         
         action = (payload.get("action") or "").strip().lower()
+
+        if action == "barge_in":
+            self._barge_in_requested = True
+            logger.info("Barge-in requested by %s", self._participant.identity)
+            return
+
         if action not in ("confirm", "cancel"):
             logger.warning("Ignoring unknown client action: %r", payload)
             return
@@ -161,6 +122,58 @@ class ParticipantVoiceHandler:
             resp = await dispatch(intent, self._saas, self._session)
             await self._publish_text(resp, language)
             await self._speak(resp.spoken_text, language)
+
+    async def _publish_text(self, resp, language: str) -> None:
+        payload = {
+            "type": "response",
+            "display_text": resp.display_text or resp.spoken_text,
+            "success": resp.success,
+            "requires_confirmation": resp.requires_confirmation,
+            "clarification_question": resp.clarification_question,
+            "error": resp.error,
+            "display_data": resp.display_data,
+            "draft_payload": resp.draft_payload,
+            "turn_state": resp.turn_state,
+            "language": language,
+        }
+        await self._publish_event(payload)
+
+    async def _publish_event(self, payload: dict) -> None:
+        try:
+            await self._ctx.room.local_participant.publish_data(
+                json.dumps(payload, default=str).encode("utf-8"),
+                reliable=True,
+            )
+        except Exception:
+            logger.exception("Failed to publish event: %s", payload.get("type"))
+
+    async def _run_and_publish(self, text: str, language: str, echo_transcript: bool) -> None:
+        async with self._reply_lock:
+            if echo_transcript:
+                await self._publish_event({"type": "transcript_final", "text": text})
+            await self._publish_event({"type": "processing", "active": True})
+            resp = await run_turn(text, self._session, self._saas, language=language)
+            await self._publish_event({"type": "processing", "active": False})
+            await self._publish_text(resp, language)
+            await self._speak(resp.spoken_text, language)
+
+    async def handle_text_input(self, text: str, language: str) -> None:
+        if self._agent_speaking:
+            return
+        await self._run_and_publish(text, language, echo_transcript=False)
+
+    async def _on_transcript(self, result: TranscriptResult) -> None:
+        if self._agent_speaking:
+            logger.debug("Dropping transcript during agent turn: %r", result.transcript)
+            return
+        marked = annotate_low_confidence(result)
+        await self._run_and_publish(marked, result.language or "fr", echo_transcript=True)
+
+    async def _on_stt_error(self, exc: Exception) -> None:
+        logger.exception("STT error for %s: %s", self._participant.identity, exc)    
+
+    async def _on_vad_state(self, speaking: bool) -> None:
+        await self._publish_event({"type": "vad_state", "speaking": speaking})
 
 
 def _parse_user_id(participant: rtc.RemoteParticipant) -> int:
@@ -193,20 +206,25 @@ async def entrypoint(ctx: JobContext) -> None:
                     participant.identity, session.user.company_slug, session.user.role)
 
     def _on_data_received(data: rtc.DataPacket) -> None:
-            participant = data.participant
-            if participant is None:
-                return
-            handler = handlers.get(participant.identity)
-            if handler is None:
-                return
-            try:
-                payload = json.loads(data.data.decode("utf-8"))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                logger.warning("Malformed data packet from %s", participant.identity)
-                return
-            if payload.get("type") != "user_action":
-                return
+        participant = data.participant
+        if participant is None:
+            return
+        handler = handlers.get(participant.identity)
+        if handler is None:
+            return
+        try:
+            payload = json.loads(data.data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            logger.warning("Malformed data packet from %s", participant.identity)
+            return
+
+        msg_type = payload.get("type")
+        if msg_type == "user_action":
             asyncio.create_task(handler.handle_client_action(payload))
+        elif msg_type == "text_input":
+            text = (payload.get("text") or "").strip()
+            if text:
+                asyncio.create_task(handler.handle_text_input(text, payload.get("language") or "fr"))
 
     @ctx.room.on("data_received")
     def on_data_received(data: rtc.DataPacket):

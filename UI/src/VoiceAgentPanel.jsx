@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useVoiceAgent } from './useVoiceAgent';
 import './VoiceAgentPanel.css';
+import { InvoiceDraftCard } from './InvoiceDraftCard.jsx';
 
 function formatListItem(item) {
   if (item.invoice_number) return `${item.invoice_number} — ${item.client_name || ''}`;
@@ -41,6 +42,55 @@ const PIPELINE_LABELS = {
   processing: { label: 'Processing…', dotClass: 'va-dot-processing' },
   agent_speaking: { label: 'Agent speaking…', dotClass: 'va-dot-speaking' },
 };
+
+function MessageBody({ message }) {
+  const { data } = message;
+  if (data && Array.isArray(data.articles)) {
+    return <InvoiceDraftCard draft={data} />;
+  }
+  return <DisplayData data={data} />;
+}
+
+function ChatThread({ messages }) {
+  return (
+    <div className="va-chat-thread">
+      {messages.map((m) => (
+        <div key={m.id} className={`va-bubble va-bubble-${m.role}`}>
+          {m.role === 'assistant' ? <MessageBody message={m} /> : <p>{m.text}</p>}
+          {m.clarification && m.clarification !== m.text && (
+            <div className="va-clarification">{m.clarification}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Composer({ canTalk, listening, onToggleMic, onSendText, onBargeIn, agentSpeaking }) {
+  const [text, setText] = useState('');
+  const submit = () => { if (text.trim()) { onSendText(text); setText(''); } };
+
+  return (
+    <div className="va-composer">
+      <button
+        className={`va-mic-toggle ${listening ? 'va-mic-on' : ''}`}
+        onClick={agentSpeaking ? onBargeIn : onToggleMic}
+        disabled={!canTalk && !agentSpeaking}
+      >
+        {agentSpeaking ? '⏹' : listening ? '🎙 (écoute…)' : '🎙'}
+      </button>
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        placeholder="Écrivez ou parlez…"
+        disabled={!canTalk}
+      />
+      <button onClick={submit} disabled={!canTalk || !text.trim()}>Envoyer</button>
+    </div>
+  );
+}
+
 
 export default function VoiceAgentPanel() {
   const [devToken, setDevToken] = useState('');
