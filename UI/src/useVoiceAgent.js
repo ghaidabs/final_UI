@@ -14,12 +14,15 @@ export function useVoiceAgent() {
   const roomRef = useRef(null);
   const audioContainerRef = useRef(null);
   const msgIdRef = useRef(0);
+  const listeningRef = useRef(false);
 
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
   const [live, setLive] = useState(initialLiveState);
   const [messages, setMessages] = useState([]);
   const [listening, setListening] = useState(false);
+  // True only once the backend confirms STT is actually receiving audio
+  const [micReady, setMicReady] = useState(false);
 
   const patchLive = useCallback((patch) => {
     setLive((prev) => ({ ...prev, ...patch }));
@@ -42,15 +45,30 @@ export function useVoiceAgent() {
     });
   }, []);
 
+  const stopMic = useCallback(async () => {
+    const room = roomRef.current;
+    if (!room || !listeningRef.current) return;
+    listeningRef.current = false;
+    setListening(false);
+    setMicReady(false);
+    try {
+      await room.localParticipant.setMicrophoneEnabled(false);
+    } catch (err) {
+      console.error('Failed to disable microphone', err);
+    }
+  }, []);
+
   const disconnect = useCallback(async () => {
     if (roomRef.current) {
       await roomRef.current.disconnect();
       roomRef.current = null;
     }
+    listeningRef.current = false;
     setStatus('disconnected');
     setLive(initialLiveState);
     setMessages([]);
     setListening(false);
+    setMicReady(false);
   }, []);
 
   const connect = useCallback(async (devToken) => {
@@ -62,7 +80,9 @@ export function useVoiceAgent() {
     setError(null);
     setLive(initialLiveState);
     setMessages([]);
+    listeningRef.current = false;
     setListening(false);
+    setMicReady(false);
 
     try {
       const tokenRes = await fetch(TOKEN_ENDPOINT, {
@@ -98,6 +118,13 @@ export function useVoiceAgent() {
           switch (msg.type) {
             case 'vad_state':
               patchLive({ vadSpeaking: msg.speaking });
+              if (msg.speaking === false) {
+                stopMic();
+              }
+              break;
+
+            case 'listening_ready':
+              setMicReady(!!msg.ready);
               break;
 
             case 'transcript_final':
@@ -110,7 +137,10 @@ export function useVoiceAgent() {
 
             case 'agent_speaking':
               patchLive({ agentSpeaking: msg.speaking });
-              if (msg.speaking) setAgentAudioMuted(false);
+              if (msg.speaking) {
+                setAgentAudioMuted(false);
+                stopMic();
+              }
               break;
 
             case 'response':
@@ -121,6 +151,7 @@ export function useVoiceAgent() {
                 turnState: msg.turn_state,
                 requiresConfirmation: msg.requires_confirmation,
                 clarification: msg.clarification_question,
+                success: msg.success,
                 error: msg.error,
                 language: msg.language,
               });
@@ -132,10 +163,12 @@ export function useVoiceAgent() {
           }
         })
         .on(RoomEvent.Disconnected, () => {
+          listeningRef.current = false;
           setStatus('disconnected');
           setLive(initialLiveState);
           setMessages([]);
           setListening(false);
+          setMicReady(false);
         });
 
       await room.connect(url, token);
@@ -145,15 +178,26 @@ export function useVoiceAgent() {
       setError(err.message || String(err));
       setStatus('error');
     }
-  }, [patchLive, pushMessage, setAgentAudioMuted]);
+  }, [patchLive, pushMessage, setAgentAudioMuted, stopMic]);
 
   const toggleMic = useCallback(async () => {
     const room = roomRef.current;
     if (!room || status !== 'connected') return;
-    const next = !listening;
-    await room.localParticipant.setMicrophoneEnabled(next);
-    setListening(next);
-  }, [status, listening]);
+
+    if (listeningRef.current) {
+      await stopMic();
+      return;
+    }
+
+    setMicReady(false);
+    try {
+      await room.localParticipant.setMicrophoneEnabled(true);
+      listeningRef.current = true;
+      setListening(true);
+    } catch (err) {
+      console.error('Failed to enable microphone', err);
+    }
+  }, [status, stopMic]);
 
   const sendAction = useCallback((action) => {
     const room = roomRef.current;
@@ -175,7 +219,7 @@ export function useVoiceAgent() {
     const payload = {
       type: 'text_input',
       text: trimmed,
-      language: language || live.response?.language || 'fr',
+      language: language || live.response?.language || null,
     };
     room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(payload)), {
       reliable: true,
@@ -183,17 +227,11 @@ export function useVoiceAgent() {
     });
   }, [status, live.response, pushMessage]);
 
-  const bargeIn = useCallback(async () => {
+  const bargeIn = useCallback(() => {
     setAgentAudioMuted(true);
     patchLive({ agentSpeaking: false });
     sendAction('barge_in');
-    // Ensure mic is on after barge-in (don't toggle off if already listening)
-    const room = roomRef.current;
-    if (room && status === 'connected' && !listening) {
-      await room.localParticipant.setMicrophoneEnabled(true);
-      setListening(true);
-    }
-  }, [setAgentAudioMuted, patchLive, sendAction, status, listening]);
+  }, [setAgentAudioMuted, patchLive, sendAction]);
 
   const lastAssistantMessage = useMemo(
     () => [...messages].reverse().find((m) => m.role === 'assistant') || null,
@@ -204,9 +242,10 @@ export function useVoiceAgent() {
     if (live.agentSpeaking) return 'agent_speaking';
     if (live.processing) return 'processing';
     if (live.vadSpeaking) return 'speech_detected';
+    if (listening && !micReady) return 'mic_starting';
     if (listening) return 'listening';
     return 'idle';
-  }, [live, listening]);
+  }, [live, listening, micReady]);
 
   const canTalk = status === 'connected' && !live.processing && !live.agentSpeaking;
 
@@ -214,7 +253,7 @@ export function useVoiceAgent() {
 
   return {
     status, error, live, messages, lastAssistantMessage,
-    pipelineState, canTalk, listening,
+    pipelineState, canTalk, listening, micReady,
     audioContainerRef, connect, disconnect,
     sendAction, sendText, toggleMic, bargeIn,
   };

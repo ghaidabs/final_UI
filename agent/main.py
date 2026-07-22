@@ -5,6 +5,7 @@ from typing import Optional
 from agent.core.session import SessionState
 from agent.speech.stt import STTSession, TranscriptResult, annotate_low_confidence
 from agent.speech.tts import TTSSession, SynthesisResult
+from agent.speech.lang_detect import resolve_language
 from agent.core.pipeline import run_turn
 from agent.core.user_context import build_session_for_user
 from agent.core.warmup import start_warmup_thread
@@ -103,10 +104,11 @@ def _print_response(resp) -> None:
     print()
 
 
-async def _run_pipeline(transcript: str, session: SessionState, saas: MockSaasClient, language: str = "fr") -> None:
-    resp = await run_turn(transcript, session, saas, language=language)
+async def _run_pipeline(transcript: str, session: SessionState, saas: MockSaasClient, language: Optional[str] = None) -> None:
+    resolved_language = resolve_language(language, transcript)
+    resp = await run_turn(transcript, session, saas, language=resolved_language)
     _print_response(resp)
-    _speak(resp.spoken_text, language)
+    _speak(resp.spoken_text, resolved_language)
 
 
 async def _voice_turn(session: SessionState, saas: MockSaasClient) -> None:

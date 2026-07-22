@@ -121,7 +121,7 @@ async def _resolve_single_client(client_name: str, saas: MockSaasClient, languag
             spoken_text=question,
             clarification_question=question,
             requires_confirmation=True,
-            display_data=matches,
+            display_data=matches[0],
         )
 
     question = t("client_confirm_multiple", language, names=names)
@@ -176,11 +176,13 @@ async def _check_payment(intent: CheckPaymentIntent, saas: MockSaasClient) -> Vo
             error="invoice_not_found",
         )
 
+    display_payload = invoices[0] if len(invoices) == 1 else invoices
+
     return VoiceResponse(
         success=True,
         spoken_text=build_payment_status_spoken(invoices, language=intent.language),
         display_text=build_payment_status_display(invoices, language=intent.language),
-        display_data=invoices,
+        display_data=display_payload,
     )
 
 
@@ -218,11 +220,13 @@ async def _check_invoice(intent: CheckInvoiceIntent, saas: MockSaasClient) -> Vo
         else build_invoice_list_display(invoices, language=intent.language)
     )
 
+    display_payload = invoices[0] if len(invoices) == 1 else invoices
+
     return VoiceResponse(
         success=True,
         spoken_text=spoken,
         display_text=display,
-        display_data=invoices,
+        display_data=display_payload,
     )
 
 
@@ -239,25 +243,7 @@ def _line_item_from_product(item, product: dict) -> dict:
     }
 
 
-def _line_item_from_raw_name(item) -> dict:
-    return {
-        "name": item.product_name,
-        "designation": item.product_name,
-        "description": "",
-        "quantity": item.quantity,
-        "unit_price": item.unit_price,
-        "total_ht": round(item.quantity * item.unit_price, 3),
-        "unit": item.unit or "piece",
-    }
-
-
 async def _resolve_product_for_article(item, saas: MockSaasClient):
-    """
-    Returns either:
-      - ("resolved", product_dict) for an exact/unambiguous match
-      - ("ambiguous", product_dict) for a single fuzzy match needing confirmation
-      - ("not_found", None) if nothing at all matched
-    """
     matches = await saas.lookup_product(item.product_name)
     if len(matches) == 0:
         return "not_found", None
@@ -269,12 +255,6 @@ async def _resolve_product_for_article(item, saas: MockSaasClient):
 
 
 async def _build_line_items_or_pause(articles: list, saas: MockSaasClient, session: SessionState, resume_intent: str, original_intent, language: str) -> tuple[list[dict] | None, VoiceResponse | None]:
-    """
-    Resolves products for each article in order. On the first ambiguous
-    single-candidate match, stashes pending_disambiguation (kind="product")
-    with everything already resolved so far, and returns (None, VoiceResponse).
-    On full success, returns (line_items, None).
-    """
     line_items: list[dict] = []
 
     for idx, item in enumerate(articles):
@@ -285,8 +265,15 @@ async def _build_line_items_or_pause(articles: list, saas: MockSaasClient, sessi
             continue
 
         if status == "not_found":
-            line_items.append(_line_item_from_raw_name(item))
-            continue
+            session.awaiting_field = "product_name"
+            session.pending_transcript = original_intent.raw_transcript
+            question = t("clarify_product_not_found", language, name=item.product_name)
+            return None, VoiceResponse(
+                success=False,
+                spoken_text=question,
+                clarification_question=question,
+                error="product_not_found",
+            )
 
         if status == "ambiguous":
             names = f"{item.product_name} → {result['designation']}"
@@ -330,7 +317,8 @@ async def _finalize_invoice_draft(intent: CreateInvoiceIntent, client: dict, saa
             language=intent.language,
         )
         if pause is not None:
-            session.pending_disambiguation["resolved_client"] = client
+            if session.pending_disambiguation is not None:
+                session.pending_disambiguation["resolved_client"] = client
             return pause
 
     draft = await saas.build_invoice_draft(
@@ -580,11 +568,12 @@ async def _resolve_disambiguation(session: SessionState, saas: MockSaasClient, l
                     language=language,
                 )
                 if pause is not None:
-                    session.pending_disambiguation["resolved_line_items"] = (
-                        resolved_so_far + session.pending_disambiguation["resolved_line_items"]
-                    )
-                    session.pending_disambiguation["article_index"] += article_idx + 1
-                    session.pending_disambiguation["resolved_client"] = resolved_client
+                    if session.pending_disambiguation is not None:
+                        session.pending_disambiguation["resolved_line_items"] = (
+                            resolved_so_far + session.pending_disambiguation["resolved_line_items"]
+                        )
+                        session.pending_disambiguation["article_index"] += article_idx + 1
+                        session.pending_disambiguation["resolved_client"] = resolved_client
                     return pause
                 resolved_so_far.extend(more_items)
 

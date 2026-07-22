@@ -36,48 +36,78 @@ function DisplayData({ data }) {
 }
 
 const PIPELINE_LABELS = {
-  idle: { label: 'Press and hold to talk', dotClass: 'va-dot-idle' },
-  listening: { label: 'Listening…', dotClass: 'va-dot-listening' },
-  speech_detected: { label: 'Speech detected', dotClass: 'va-dot-speech' },
-  processing: { label: 'Processing…', dotClass: 'va-dot-processing' },
-  agent_speaking: { label: 'Agent speaking…', dotClass: 'va-dot-speaking' },
+  idle: { label: 'Appuyez pour parler', dotClass: 'va-dot-idle' },
+  mic_starting: { label: 'Activation du micro…', dotClass: 'va-dot-mic-starting' },
+  listening: { label: 'À l\'écoute…', dotClass: 'va-dot-listening' },
+  speech_detected: { label: 'Parole détectée', dotClass: 'va-dot-speech' },
+  processing: { label: 'Traitement…', dotClass: 'va-dot-processing' },
+  agent_speaking: { label: 'L\'assistant parle…', dotClass: 'va-dot-speaking' },
 };
 
 function MessageBody({ message }) {
-  const { data } = message;
-  if (data && Array.isArray(data.articles)) {
-    return <InvoiceDraftCard draft={data} />;
-  }
-  return <DisplayData data={data} />;
+  const { text, data } = message;
+  const hasDraftCard = data && Array.isArray(data.articles);
+
+  return (
+    <>
+      {text && <p className="va-bubble-text">{text}</p>}
+      {hasDraftCard ? <InvoiceDraftCard draft={data} /> : <DisplayData data={data} />}
+    </>
+  );
 }
 
 function ChatThread({ messages }) {
+  if (!messages.length) {
+    return (
+      <div className="va-chat-empty">
+        Dites ou écrivez votre demande pour commencer, par exemple
+        « Crée une facture pour Ahmed, 3 jours de consultation IT à 500 dinars ».
+      </div>
+    );
+  }
   return (
     <div className="va-chat-thread">
-      {messages.map((m) => (
-        <div key={m.id} className={`va-bubble va-bubble-${m.role}`}>
-          {m.role === 'assistant' ? <MessageBody message={m} /> : <p>{m.text}</p>}
-          {m.clarification && m.clarification !== m.text && (
-            <div className="va-clarification">{m.clarification}</div>
-          )}
-        </div>
-      ))}
+      {messages.map((m) => {
+        const isErrorState = m.role === 'assistant' && m.success === false;
+        return (
+          <div
+            key={m.id}
+            className={`va-bubble va-bubble-${m.role}${isErrorState ? ' va-bubble-assistant-error' : ''}`}
+          >
+            {m.role === 'assistant' ? <MessageBody message={m} /> : <p>{m.text}</p>}
+            {m.clarification && m.clarification !== m.text && (
+              <div className="va-clarification">{m.clarification}</div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function Composer({ canTalk, listening, onToggleMic, onSendText, onBargeIn, agentSpeaking }) {
+function Composer({ canTalk, listening, micReady, onToggleMic, onSendText, onBargeIn, agentSpeaking }) {
   const [text, setText] = useState('');
   const submit = () => { if (text.trim()) { onSendText(text); setText(''); } };
+
+  const micStarting = listening && !micReady;
+  const micLabel = agentSpeaking
+    ? 'Interrompre'
+    : micStarting
+      ? 'Activation du micro…'
+      : listening
+        ? "Arrêter l'écoute"
+        : 'Activer le micro';
 
   return (
     <div className="va-composer">
       <button
-        className={`va-mic-toggle ${listening ? 'va-mic-on' : ''}`}
+        className={`va-mic-toggle ${listening ? 'va-mic-on' : ''} ${micStarting ? 'va-mic-connecting' : ''} ${agentSpeaking ? 'va-mic-stop' : ''}`}
         onClick={agentSpeaking ? onBargeIn : onToggleMic}
         disabled={!canTalk && !agentSpeaking}
+        aria-label={micLabel}
+        title={micLabel}
       >
-        {agentSpeaking ? '⏹' : listening ? '🎙 (écoute…)' : '🎙'}
+        {agentSpeaking ? '⏹' : micStarting ? '…' : '🎙'}
       </button>
       <input
         value={text}
@@ -86,17 +116,20 @@ function Composer({ canTalk, listening, onToggleMic, onSendText, onBargeIn, agen
         placeholder="Écrivez ou parlez…"
         disabled={!canTalk}
       />
-      <button onClick={submit} disabled={!canTalk || !text.trim()}>Envoyer</button>
+      <button className="va-btn va-btn-primary va-btn-small" onClick={submit} disabled={!canTalk || !text.trim()}>
+        Envoyer
+      </button>
     </div>
   );
 }
 
-
 export default function VoiceAgentPanel() {
   const [devToken, setDevToken] = useState('');
   const {
-    status, error, live, pipelineState, canTalk,
-    audioContainerRef, connect, disconnect, sendAction, setMicHeld,
+    status, error, live, messages, lastAssistantMessage,
+    pipelineState, canTalk, listening, micReady,
+    audioContainerRef, connect, disconnect,
+    sendAction, sendText, toggleMic, bargeIn,
   } = useVoiceAgent();
 
   const connected = status === 'connected';
@@ -105,24 +138,19 @@ export default function VoiceAgentPanel() {
   useEffect(() => {
     if (!connected) return;
     const onKeyDown = (e) => {
-      if (e.code === 'Space' && !e.repeat && canTalk) {
+      if (
+        e.code === 'Space' &&
+        !e.repeat &&
+        live.agentSpeaking &&
+        document.activeElement?.tagName !== 'INPUT'
+      ) {
         e.preventDefault();
-        setMicHeld(true);
-      }
-    };
-    const onKeyUp = (e) => {
-      if (e.code === 'Space') {
-        e.preventDefault();
-        setMicHeld(false);
+        bargeIn();
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-    };
-  }, [connected, canTalk, setMicHeld]);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [connected, live.agentSpeaking, bargeIn]);
 
   return (
     <div className="va-panel">
@@ -168,55 +196,28 @@ export default function VoiceAgentPanel() {
               <span className="va-pipeline-label">{label}</span>
             </div>
 
-            <div className="va-ptt-wrap">
-              <button
-                className={`va-ptt-btn ${live.micHeld ? 'va-ptt-active' : ''} ${live.vadSpeaking ? 'va-ptt-speech' : ''}`}
-                disabled={!canTalk}
-                onMouseDown={() => canTalk && setMicHeld(true)}
-                onMouseUp={() => setMicHeld(false)}
-                onMouseLeave={() => live.micHeld && setMicHeld(false)}
-                onTouchStart={() => canTalk && setMicHeld(true)}
-                onTouchEnd={() => setMicHeld(false)}
-              >
-                🎙
-              </button>
-              <span className="va-ptt-hint">
-                {canTalk ? 'Hold to talk (or press Space)' : 'Please wait…'}
-              </span>
-            </div>
+            <ChatThread messages={messages} />
 
-            {live.finalTranscript && (
-              <div className="va-transcript-box">
-                <span className="va-transcript-label">🎙 You</span>
-                <p>{live.finalTranscript}</p>
+            {lastAssistantMessage?.requiresConfirmation && (
+              <div className="va-confirm-row">
+                <button className="va-btn va-btn-mint" onClick={() => sendAction('confirm')}>
+                  Confirmer
+                </button>
+                <button className="va-btn va-btn-secondary" onClick={() => sendAction('cancel')}>
+                  Annuler
+                </button>
               </div>
             )}
 
-            {live.response && (
-              <>
-                <div className={`va-response ${live.response.error ? 'error' : ''}`}>
-                  {live.response.display_text}
-                </div>
-
-                {live.response.clarification_question &&
-                  live.response.clarification_question !== live.response.display_text && (
-                    <div className="va-clarification">{live.response.clarification_question}</div>
-                  )}
-
-                <DisplayData data={live.response.display_data ?? live.response.draft_payload} />
-
-                {live.response.requires_confirmation && (
-                  <div className="va-confirm-row">
-                    <button className="va-btn va-btn-mint" onClick={() => sendAction('confirm')}>
-                      Confirmer
-                    </button>
-                    <button className="va-btn va-btn-secondary" onClick={() => sendAction('cancel')}>
-                      Annuler
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
+            <Composer
+              canTalk={canTalk}
+              listening={listening}
+              micReady={micReady}
+              onToggleMic={toggleMic}
+              onSendText={sendText}
+              onBargeIn={bargeIn}
+              agentSpeaking={live.agentSpeaking}
+            />
           </>
         )}
       </div>

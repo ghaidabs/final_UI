@@ -1,3 +1,4 @@
+# agent/livekit_agent.py
 from __future__ import annotations
 import asyncio
 import json
@@ -8,6 +9,7 @@ from livekit import rtc
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli
 from agent.speech.stt import STTSession, TranscriptResult, LiveKitAudioSource, annotate_low_confidence
 from agent.speech.tts import TTSSession
+from agent.speech.lang_detect import resolve_language
 from agent.core.pipeline import run_turn
 from agent.core.user_context import build_session_for_user
 from agent.core.session import SessionState
@@ -23,7 +25,8 @@ TTS_SAMPLE_RATE = 24_000
 TTS_FRAME_MS = 20
 TTS_BYTES_PER_FRAME = int(TTS_SAMPLE_RATE * TTS_FRAME_MS / 1000) * 2  # 16-bit mono
 
-start_warmup_thread()
+_SUPPORTED_LANGUAGES = ("fr", "en")
+
 
 class ParticipantVoiceHandler:
     def __init__(self, ctx: JobContext, participant: rtc.RemoteParticipant, session: SessionState):
@@ -44,8 +47,18 @@ class ParticipantVoiceHandler:
         self._reply_lock = asyncio.Lock()
         self._agent_speaking = False
         self._barge_in_requested = False
+        self._locked_language: Optional[str] = None
 
-    async def start(self, track: rtc.Track) -> None:
+    def _lock_language(self, language: Optional[str], text: Optional[str] = None) -> str:
+        if self._locked_language is not None:
+            return self._locked_language
+
+        resolved = resolve_language(language, text)
+        self._locked_language = resolved
+        logger.info("Locked conversation language to %r for %s", resolved, self._participant.identity)
+        return self._locked_language
+
+    async def _ensure_output_published(self) -> None:
         if not self._published:
             await self._ctx.room.local_participant.publish_track(
                 self._out_track,
@@ -53,26 +66,46 @@ class ParticipantVoiceHandler:
             )
             self._published = True
 
-        self._stt = STTSession(
-            on_transcript=self._on_transcript,
-            on_error=self._on_stt_error,
-            on_speaking_state_change=self._on_vad_state,  
-        )
-        await self._stt.start()
+    async def attach_audio_track(self, track: rtc.Track) -> None:
+        await self._ensure_output_published()
+
+        if self._audio_bridge is not None:
+            await self._audio_bridge.stop()
+            self._audio_bridge = None
+
+        if self._stt is None:
+            self._stt = STTSession(
+                on_transcript=self._on_transcript,
+                on_error=self._on_stt_error,
+                on_speaking_state_change=self._on_vad_state,
+            )
+            await self._stt.start()
 
         audio_stream = rtc.AudioStream(track, sample_rate=16000, num_channels=1)
         self._audio_bridge = LiveKitAudioSource(audio_stream, self._stt)
         self._audio_bridge.start()
 
+        await self._publish_event({"type": "listening_ready", "ready": True})
+
+    async def detach_audio_track(self) -> None:
+        if self._audio_bridge:
+            await self._audio_bridge.stop()
+            self._audio_bridge = None
+        await self._publish_event({"type": "listening_ready", "ready": False})
+
     async def stop(self) -> None:
         if self._audio_bridge:
             await self._audio_bridge.stop()
+            self._audio_bridge = None
         if self._stt:
             await self._stt.finish()
+            self._stt = None
+        await self._publish_event({"type": "listening_ready", "ready": False})
 
     async def _speak(self, text: str, language: str) -> None:
         if not text or not text.strip():
             return
+        await self._ensure_output_published()
         self._agent_speaking = True
         self._barge_in_requested = False
         await self._publish_event({"type": "agent_speaking", "speaking": True})
@@ -94,12 +127,10 @@ class ParticipantVoiceHandler:
         except Exception:
             logger.exception("TTS synthesis failed")
         finally:
-            self._agent_speaking = False                                         
+            self._agent_speaking = False
             await self._publish_event({"type": "agent_speaking", "speaking": False})
 
     async def handle_client_action(self, payload: dict) -> None:
-        # Handle a button-triggered confirm/cancel/barge-in from the frontend
-        
         action = (payload.get("action") or "").strip().lower()
 
         if action == "barge_in":
@@ -111,8 +142,8 @@ class ParticipantVoiceHandler:
             logger.warning("Ignoring unknown client action: %r", payload)
             return
 
-        language = payload.get("language") or "fr"
-        
+        language = self._lock_language(payload.get("language"))
+
         try:
             intent = build_button_intent(action, language=language)
         except ValueError:
@@ -160,17 +191,19 @@ class ParticipantVoiceHandler:
     async def handle_text_input(self, text: str, language: str) -> None:
         if self._agent_speaking:
             return
-        await self._run_and_publish(text, language, echo_transcript=False)
+        locked = self._lock_language(language, text=text)
+        await self._run_and_publish(text, locked, echo_transcript=False)
 
     async def _on_transcript(self, result: TranscriptResult) -> None:
         if self._agent_speaking:
             logger.debug("Dropping transcript during agent turn: %r", result.transcript)
             return
         marked = annotate_low_confidence(result)
-        await self._run_and_publish(marked, result.language or "fr", echo_transcript=True)
+        locked = self._lock_language(result.language, text=result.transcript)
+        await self._run_and_publish(marked, locked, echo_transcript=True)
 
     async def _on_stt_error(self, exc: Exception) -> None:
-        logger.exception("STT error for %s: %s", self._participant.identity, exc)    
+        logger.exception("STT error for %s: %s", self._participant.identity, exc)
 
     async def _on_vad_state(self, speaking: bool) -> None:
         await self._publish_event({"type": "vad_state", "speaking": speaking})
@@ -190,41 +223,64 @@ def _parse_user_id(participant: rtc.RemoteParticipant) -> int:
 
 async def entrypoint(ctx: JobContext) -> None:
     handlers: dict[str, ParticipantVoiceHandler] = {}
+    creation_lock = asyncio.Lock()
+
+    async def _get_or_create_handler(participant: rtc.RemoteParticipant) -> Optional[ParticipantVoiceHandler]:
+        handler = handlers.get(participant.identity)
+        if handler is not None:
+            return handler
+        async with creation_lock:
+            handler = handlers.get(participant.identity)
+            if handler is not None:
+                return handler
+            try:
+                user_id = _parse_user_id(participant)
+                session = build_session_for_user(user_id)
+            except Exception:
+                logger.exception("Rejecting participant %s: could not resolve app user", participant.identity)
+                return None
+            handler = ParticipantVoiceHandler(ctx, participant, session)
+            handlers[participant.identity] = handler
+            logger.info(
+                "Session ready for %s (company=%s role=%s)",
+                participant.identity, session.user.company_slug, session.user.role,
+            )
+            return handler
 
     async def _handle_new_audio_track(track: rtc.Track, participant: rtc.RemoteParticipant) -> None:
-        try:
-            user_id = _parse_user_id(participant)
-            session = build_session_for_user(user_id)
-        except Exception:
-            logger.exception("Rejecting participant %s: could not resolve app user", participant.identity)
+        handler = await _get_or_create_handler(participant)
+        if handler is None:
             return
+        await handler.attach_audio_track(track)
 
-        handler = ParticipantVoiceHandler(ctx, participant, session)
-        handlers[participant.identity] = handler
-        await handler.start(track)
-        logger.info("Voice session ready for %s (company=%s role=%s)",
-                    participant.identity, session.user.company_slug, session.user.role)
+    async def _handle_audio_track_unsubscribed(participant: rtc.RemoteParticipant) -> None:
+        handler = handlers.get(participant.identity)
+        if handler is None:
+            return
+        await handler.detach_audio_track()
+
+    async def _dispatch_data_payload(participant: rtc.RemoteParticipant, payload: dict) -> None:
+        handler = await _get_or_create_handler(participant)
+        if handler is None:
+            return
+        msg_type = payload.get("type")
+        if msg_type == "user_action":
+            await handler.handle_client_action(payload)
+        elif msg_type == "text_input":
+            text = (payload.get("text") or "").strip()
+            if text:
+                await handler.handle_text_input(text, payload.get("language") or "")
 
     def _on_data_received(data: rtc.DataPacket) -> None:
         participant = data.participant
         if participant is None:
-            return
-        handler = handlers.get(participant.identity)
-        if handler is None:
             return
         try:
             payload = json.loads(data.data.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
             logger.warning("Malformed data packet from %s", participant.identity)
             return
-
-        msg_type = payload.get("type")
-        if msg_type == "user_action":
-            asyncio.create_task(handler.handle_client_action(payload))
-        elif msg_type == "text_input":
-            text = (payload.get("text") or "").strip()
-            if text:
-                asyncio.create_task(handler.handle_text_input(text, payload.get("language") or "fr"))
+        asyncio.create_task(_dispatch_data_payload(participant, payload))
 
     @ctx.room.on("data_received")
     def on_data_received(data: rtc.DataPacket):
@@ -235,14 +291,19 @@ async def entrypoint(ctx: JobContext) -> None:
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             asyncio.create_task(_handle_new_audio_track(track, participant))
 
+    @ctx.room.on("track_unsubscribed")
+    def on_track_unsubscribed(track: rtc.Track, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant):
+        if track.kind == rtc.TrackKind.KIND_AUDIO:
+            asyncio.create_task(_handle_audio_track_unsubscribed(participant))
+
     @ctx.room.on("participant_disconnected")
     def on_participant_disconnected(participant: rtc.RemoteParticipant):
         handler = handlers.pop(participant.identity, None)
         if handler:
             asyncio.create_task(handler.stop())
 
-    # Register handlers *before* connecting so nothing is missed.
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+    start_warmup_thread()
 
 
 if __name__ == "__main__":

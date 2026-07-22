@@ -227,7 +227,7 @@ class STTSession:
             transcript=full_transcript,  
             confidence=overall_confidence,
             words=words,
-            language=self._last_language or self._config.get("language"),
+            language=self._last_language,
         )
 
         await self._on_transcript(parsed)
