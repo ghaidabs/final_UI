@@ -178,10 +178,10 @@ class ParticipantVoiceHandler:
         except Exception:
             logger.exception("Failed to publish event: %s", payload.get("type"))
 
-    async def _run_and_publish(self, text: str, language: str, echo_transcript: bool) -> None:
+    async def _run_and_publish(self, text: str, language: str, echo_transcript: bool, display_text: str | None = None) -> None:
         async with self._reply_lock:
             if echo_transcript:
-                await self._publish_event({"type": "transcript_final", "text": text})
+                await self._publish_event({"type": "transcript_final", "text": display_text or text})
             await self._publish_event({"type": "processing", "active": True})
             resp = await run_turn(text, self._session, self._saas, language=language)
             await self._publish_event({"type": "processing", "active": False})
@@ -200,7 +200,7 @@ class ParticipantVoiceHandler:
             return
         marked = annotate_low_confidence(result)
         locked = self._lock_language(result.language, text=result.transcript)
-        await self._run_and_publish(marked, locked, echo_transcript=True)
+        await self._run_and_publish(marked, locked, echo_transcript=True, display_text=result.transcript)
 
     async def _on_stt_error(self, exc: Exception) -> None:
         logger.exception("STT error for %s: %s", self._participant.identity, exc)

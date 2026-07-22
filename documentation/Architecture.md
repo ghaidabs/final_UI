@@ -1,4 +1,4 @@
-## Architecture Overview
+# Architecture Overview
 
 ```
 ┌──────────┐    PCM audio     ┌──────────┐   transcript    ┌──────────────┐
@@ -26,58 +26,91 @@
 ## Project Structure
 
 ```
-voice assistant agent/
-├── agent/                 
-│   ├── main.py             # CLI REPL — text input or voice mode
-│   ├── stt.py              # Deepgram streaming STT session
-│   ├── stt_console.py      # Standalone mic → STT debugger
-│   ├── nlu.py              # LLM-powered intent extraction + price-only extractor
-│   ├── dispatcher.py       # Intent routing, disambiguation, confirmation flows
-│   ├── validator.py        # PII redaction (pure regex)
-│   ├── normalizer.py       # Invoice-number normalization
-│   ├── fuzzy.py            # Fuzzy entity matching (rapidfuzz)
-│   ├── session.py          # Session state & user context dataclasses
-│   ├── tts.py              # Text-to-Speech
+InVoice-agent-main/
+├── agent/                          
+│   ├── main.py                     # CLI REPL — text or voice mode
+│   ├── livekit_agent.py            # LiveKit agent worker (real-time voice)
+│   ├── core/                       
+│   │   ├── dispatcher.py           # Intent routing, disambiguation, confirmation flows
+│   │   ├── pipeline.py             # Dispatch entry point
+│   │   ├── session.py              # SessionState & UserContext dataclasses
+│   │   ├── user_context.py         # new session helper
+│   │   └── warmup.py               # Background RAG warm-up thread
+│   ├── nlp/                        
+│   │   ├── nlu.py                  # LLM-powered intent extraction
+│   │   ├── validator.py            # PII redaction (regex-based)
+│   │   ├── normalizer.py           # Invoice-number normalization
+│   │   └── fuzzy.py                # Fuzzy entity matching (rapidfuzz)
+│   ├── speech/                     
+│   │   ├── stt.py                  # Deepgram Nova-3 streaming STT session
+│   │   ├── stt_console.py          # Standalone mic → STT debugger
+│   │   ├── tts.py                  # ElevenLabs streaming TTS
+│   │   └── lang_detect.py          # Language detection & resolution (fr/en)
 │   └── prompts/
 │       └── intent_extraction.txt   # System prompt for NLU
 │
-├── api/                    
-│   ├── mock_saas_client.py # Mock client backed by local JSON DB
-│   └── saas_client.py      # Real HTTP client
+├── api/                           
+│   ├── mock_saas_client.py         # Mock client backed by local JSON DB, with entity cascade
+│   └── saas_client.py              # Real HTTP client (placeholder)
 │
-├── rag/                    
-│   ├── embeddings.py       # Sentence-transformer embeddings
-│   ├── indexer.py          # Qdrant vector indexing
-│   └── retriever.py        # Similarity search against Qdrant
+├── rag/                            
+│   ├── embeddings.py               # Sentence-transformer embeddings
+│   ├── indexer.py                  # Qdrant vector indexing
+│   └── retriever.py                # Similarity search against Qdrant
 │
-├── schemas/                # Pydantic data models
-│   ├── intents.py         
-│   └── responses.py        
+├── schemas/                        
+│   ├── intents.py                  # IntentType enum + per-intent Pydantic models
+│   └── responses.py                # VoiceResponse with consistency validators
 │
-├── templates/              # Spoken-text response builders (fr/en)
-│   ├── clarification.py    
-│   ├── invoice.py          
-│   ├── client_lookup.py    
-│   └── payment_status.py   
+├── templates/                      
+│   ├── clarification.py            # Bilingual string table
+│   ├── invoice.py                  # Drafts, invoice details, invoice lists, added line items
+│   ├── client_lookup.py            # Client lookup responses
+│   ├── payment_status.py           # Payment status query responses
+│   └── spoken_format.py            # Formatting helpers
 │
-├── mock/                   
-│   ├── db.py               
-│   ├── clients.json        
-│   ├── invoices.json       
-│   ├── products.json       
-│   ├── companies.json      
-│   └── users.json          
+├── mock/                         
+│   ├── db.py                       # In-memory DB backed by JSON seed files, CRUD, pagination
+│   └── data/
+│       ├── clients.json            # Sample client records per company
+│       ├── companies.json          # 2 companies (ACME, NOVA)
+│       ├── invoices.json           # Sample invoices in various statuses
+│       ├── products.json           # Sample product catalog per company
+│       └── users.json              # 3 users across roles (ADMIN, OWNER)
 │
-├── server/                
-│   ├── main.py            
-│   ├── auth.py            
-│   └── routes/
-│       ├── audio_proxy.py      
-│       └── livekit_token.py    
+├── server/                        
+│   ├── main.py                     # App factory, CORS middleware, router mounts
+│   ├── auth.py                     # JWT authentication
+│   ├── livekit_token.py            # Issues LiveKit room tokens
+│   └── dev_token.py                # Prints a signed JWT for mock users
 │
-├── frontend/              
+├── UI/                             
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── index.html
+│   └── src/
+│       ├── main.jsx                # App entry point 
+│       ├── components/             
+│       │   ├── VoiceAgentPanel/    # Main voice agent UI panel
+│       │   ├── DisplayData.jsx     # Structured data renderer
+│       │   ├── IntentSuggestions.jsx
+│       │   ├── InvoiceDraftCard.jsx
+│       │   ├── LineItemCard.jsx
+│       │   └── TaskCard.jsx
+│       ├── hooks/
+│       │   └── useVoiceAgent.js    # LiveKit connection & data channel hook
+│       └── utils/
+│           ├── i18n.js             # Bilingual UI strings
+│           ├── intents.js          # Intent metadata & icons
+│           └── taskGrouping.js     # Task grouping logic
 │
-├── .env.example            
+├── documentation/                  
+│   ├── Architecture.md             
+│   ├── LiveKit.md                  
+│   ├── RAG.md                      
+│   └── UI.md                      
+│
+├── .env.example
 ├── .gitignore
 └── requirements.txt
 ```
@@ -90,8 +123,8 @@ voice assistant agent/
 
 | File | Description |
 |------|-------------|
-| `agent/stt.py` | Production `STTSession` class wrapping **Deepgram Nova-3** streaming WebSocket |
-| `agent/stt_console.py` | Standalone dev tool — streams from system microphone, prints per-word confidence with color coding |
+| `agent/speech/stt.py` | Production `STTSession` class wrapping **Deepgram Nova-3** streaming WebSocket |
+| `agent/speech/stt_console.py` | Standalone dev tool — streams from system microphone, prints per-word confidence with color coding |
 
 **Key details:**
 
@@ -101,19 +134,34 @@ voice assistant agent/
 - **Confidence thresholds:** words below `0.55` are flagged; overall transcript below `0.6` is marked low-confidence.
 - Low-confidence words are annotated with a `⚠` marker (via `annotate_low_confidence()`) before being sent to the NLU, so the LLM knows which tokens are uncertain.
 - **PII redaction in STT:** `stt.py` outputs the **raw transcript** (no PII redaction at the STT level). Redaction happens downstream in `nlu.py` before sending to the LLM.
-- `LiveKitAudioSource` adapter is stubbed — will bridge LiveKit's `AudioStream` to `STTSession` once integrated.
+- `LiveKitAudioSource` adapter bridges LiveKit's `AudioStream` to `STTSession` for the real-time voice path.
 
 **Voice mode in the REPL:**
 
-The `main.py` REPL supports a `voice` command that captures one full spoken utterance via the microphone, transcribes it through `STTSession`, annotates low-confidence words, and feeds the result directly into the NLU → Dispatcher pipeline.
+The `agent/main.py` REPL supports a `voice` command that captures one full spoken utterance via the microphone, transcribes it through `STTSession`, annotates low-confidence words, and feeds the result directly into the NLU → Dispatcher pipeline.
 
 ---
 
-### 2. Validation & PII Redaction (WIP)
+### 2. Language Detection
 
 | File | Description |
 |------|-------------|
-| `agent/validator.py` | Redacts sensitive data from transcripts before they reach the LLM |
+| `agent/speech/lang_detect.py` | Detects and resolves the user's language from STT output or transcript text |
+
+**Key details:**
+
+- **Supported languages:** `fr` (French) and `en` (English). Default is `fr`.
+- `detect_language(text)` — uses `langdetect` to identify the language of a text string. Falls back to `fr` on failure.
+- `resolve_language(tag, text)` — tries the provided language tag first (from STT), falls back to `detect_language(text)` if the tag is missing or unsupported.
+- In the LiveKit agent, language is **locked** to the first detected language for the entire conversation (per participant) to prevent mid-session language switching.
+
+---
+
+### 3. Validation & PII Redaction
+
+| File | Description |
+|------|-------------|
+| `agent/nlp/validator.py` | Redacts sensitive data from transcripts before they reach the LLM |
 
 The validator uses a lightweight, self-contained pipeline:
 
@@ -128,21 +176,19 @@ The validator uses a lightweight, self-contained pipeline:
 
 The `redact_pii()` function accepts an optional `company_slug` parameter to improve shielding accuracy.
 
-> **Change from previous version:** GuardrailsAI (only English support), Presidio/spaCy (not robust for STT transcripts) have been replaced by this regex-only approach.
-
 ---
 
-### 3. Natural Language Understanding (NLU)
+### 4. Natural Language Understanding (NLU)
 
 | File | Description |
 |------|-------------|
-| `agent/nlu.py` | Sends redacted transcript to an LLM and parses structured intent JSON |
+| `agent/nlp/nlu.py` | Sends redacted transcript to an LLM and parses structured intent JSON |
 | `agent/prompts/intent_extraction.txt` | System prompt defining all intent schemas and extraction rules |
 
 **How it works:**
 
 1. The transcript is PII-redacted via `redact_pii(transcript, company_slug)`.
-2. The safe transcript is sent to **Groq** (model: `openai/gpt-oss-120b`) with `temperature=0.1` and `response_format: json_object`.
+2. The safe transcript is sent to **Groq** with `temperature=0.1` and `response_format: json_object`.
 3. The LLM returns a JSON object matching one of the defined intent schemas.
 4. The raw JSON is validated into the corresponding **Pydantic** intent model.
 5. **Invoice number normalization** is applied for `check_invoice`, `check_payment`, and `add_line_item` intents:
@@ -166,24 +212,24 @@ When the dispatcher is awaiting a unit price from the user, this function extrac
 | `add_line_item` | `invoice_number`, `product_name`, `quantity`, `unit_price`, `unit` |
 | `check_payment` | `invoice_number` or `client_name` |
 | `confirm` | (confirms a pending action) |
-| `cancel` | ( cancels a pending action) |
+| `cancel` | (cancels a pending action) |
 | `unknown` | `raw_text` |
 
 ---
 
-### 4. Normalizer & Fuzzy Matching
+### 5. Normalizer & Fuzzy Matching
 
 | File | Description |
 |------|-------------|
-| `agent/normalizer.py` | Converts spoken/partial invoice numbers into the canonical format `SLUG_FYYYYMM-SEQ` |
-| `agent/fuzzy.py` | RapidFuzz-based entity resolution for client names and product names |
+| `agent/nlp/normalizer.py` | Converts spoken/partial invoice numbers into the canonical format `SLUG_FYYYYMM-SEQ` |
+| `agent/nlp/fuzzy.py` | RapidFuzz-based entity resolution for client names and product names |
 
 - **Normalizer:** extracts the company slug and 9+ digits, reassembles into `SLUG_FYYYYMM-SEQ`. Returns `None` if fewer than 9 digits are found (triggers a clarification flow).
 - **Fuzzy matching:** uses `WRatio` scorer with a floor of 75%. Returns top-K matches with their `_fuzzy_score` attached, so the dispatcher can decide whether to auto-resolve or ask for confirmation.
 
 ---
 
-### 5. Retrieval-Augmented Generation (RAG)
+### 6. Retrieval-Augmented Generation (RAG)
 
 | File | Description |
 |------|-------------|
@@ -207,15 +253,32 @@ Collections are named `{entity_type}s_{company_id}` (e.g., `clients_1`, `product
 Exact substring match → Fuzzy match (rapidfuzz) → Semantic match (RAG)
 ```
 
+> See [RAG.md](../documentation/RAG.md) for detailed documentation on indexing, retrieval, and the cascade.
+
 ---
 
-### 6. Dispatcher
+### 7. Pipeline & Turn Orchestration
 
 | File | Description |
 |------|-------------|
-| `agent/dispatcher.py` | Routes intents to handlers, orchestrates business logic, disambiguation, and confirmation flows |
+| `agent/core/pipeline.py` | `run_turn()` — single entry point that runs one conversation turn |
 
-**Key behaviors :**
+**`run_turn(transcript, session, saas, language)` flow:**
+
+1. **Check for awaiting field:** if the session is waiting for a specific input (invoice number, unit price, etc.), `resume_awaiting_field()` handles it directly without running full NLU.
+2. **NLU extraction:** `extract_intent_with_context()` processes the transcript through PII redaction → LLM → Pydantic validation.
+3. **Dispatch:** routes the extracted intent to the appropriate handler.
+4. **Attach turn state:** decorates the response with the current session state for the frontend.
+
+---
+
+### 8. Dispatcher
+
+| File | Description |
+|------|-------------|
+| `agent/core/dispatcher.py` | Routes intents to handlers, orchestrates business logic, disambiguation, and confirmation flows |
+
+**Key behaviors:**
 
 #### Confidence gating with recoverable fields
 
@@ -254,9 +317,13 @@ When entity resolution (client or product) returns a single fuzzy/semantic match
 
 #### `resume_awaiting_field()`
 
-A top-level function called by `main.py` **before** NLU extraction when the session is awaiting a specific field. Handles two cases:
+A top-level function called by `pipeline.py` **before** NLU extraction when the session is awaiting a specific field. Handles two cases:
 - **`invoice_number`:** normalizes the user's answer directly and re-dispatches the stashed intent.
 - **`unit_price`:** uses `extract_price_only()` (regex + LLM fallback) to extract the number, patches the stashed intent, and re-dispatches.
+
+#### Button intents (`build_button_intent`)
+
+The LiveKit agent can receive `confirm` / `cancel` actions from the frontend UI via the data channel. `build_button_intent(action, language)` constructs the corresponding intent object so it can be dispatched through the same pipeline as voice intents.
 
 #### `_handle_confirm` / `_handle_cancel`
 
@@ -270,7 +337,7 @@ These now handle three independent pending states in priority order:
 
 ---
 
-### 7. Templates (Response Generation)
+### 9. Templates (Response Generation)
 
 | File | Description |
 |------|-------------|
@@ -278,16 +345,29 @@ These now handle three independent pending states in priority order:
 | `templates/invoice.py` | Spoken responses for drafts, invoice details, invoice lists, added line items |
 | `templates/client_lookup.py` | Spoken responses for client lookups |
 | `templates/payment_status.py` | Spoken responses for payment status queries |
+| `templates/spoken_format.py` | Formatting helpers: currency names, amount formatting, digit-by-digit spoken numbers, invoice suffix reading |
 
 All templates produce **natural language text** in either French or English, determined by the detected language of the user's utterance.
 
+**`spoken_format.py` helpers:**
+
+| Function | Purpose |
+|----------|---------|
+| `spoken_currency(code, language)` | `"TND"` → `"Dinars Tunisiens"` / `"Tunisian Dinars"` |
+| `spoken_amount(value, currency, language)` | `45.5, "TND"` → `"45.50 Dinars Tunisiens"` |
+| `display_amount(value, currency)` | `45.5, "TND"` → `"45.50 TND"` |
+| `spoken_digit_group(group, language)` | `"123"` → `"un deux trois"` |
+| `spoken_phone_number(phone, language)` | `"+216 98 000 003"` → `"plus deux un six, neuf huit, ..."` |
+| `spoken_invoice_suffix(number, language)` | `"ACME_F202605-001"` → `"deux zéro deux six zéro cinq, zéro zéro un"` |
+| `status_phrase(status, language)` | `"paid"` → `"a été payée"` / `"has been paid"` |
+
 ---
 
-### 8. Text-to-Speech (TTS)
+### 10. Text-to-Speech (TTS)
 
 | File | Description |
 |------|-------------|
-| `agent/tts.py` | `TTSSession` class wrapping the **ElevenLabs** streaming TTS API |
+| `agent/speech/tts.py` | `TTSSession` class wrapping the **ElevenLabs** streaming TTS API |
 
 **Key details:**
 
@@ -309,7 +389,7 @@ All data models live in `schemas/` and use **Pydantic v2**.
 
 ## Session Management
 
-Defined in `agent/session.py`:
+Defined in `agent/core/session.py`:
 
 - **`UserContext`** — immutable per-session: `user_id`, `company_id`, `role`, `company_slug`.
 - **`SessionState`** — mutable conversation state:
@@ -321,10 +401,15 @@ Defined in `agent/session.py`:
 | `pending_transcript` | `str?` | Original transcript to prepend when resuming |
 | `pending_disambiguation` | `dict?` | Stashed fuzzy candidate + original intent for disambiguation |
 | `pending_confirmation` | `bool` | Flags that a confirm/cancel is expected |
+| `pending_resolved_client` | `dict?` | Holds the resolved client during multi-step invoice creation |
 | `awaiting_field` | `str?` | Which field the user needs to supply (`unit_price`, `invoice_number`, `client_name`, `product_name`) |
 | `awaiting_intent` | `Any?` | The full intent object being built incrementally |
 | `awaiting_article_indices` | `list[int]?` | Which articles in a `create_invoice` are missing prices |
 | `last_intent` | `str?` | Tracks the last intent type for context |
+
+**User context resolution** (`agent/core/user_context.py`):
+
+`build_session_for_user(user_id)` loads the user and company from the mock database and constructs a `SessionState` with the appropriate `UserContext`. This is called both by the CLI REPL (on user selection) and by the LiveKit agent (when a participant joins a room).
 
 ---
 
@@ -354,7 +439,26 @@ Defined in `agent/session.py`:
 
 ## Server
 
-The `server/` directory is scaffolded for a **FastAPI** application that will expose:
+The `server/` directory contains a **FastAPI** application that exposes:
 
-- **LiveKit token endpoint** — issue LiveKit room tokens for real-time voice sessions.
-- **JWT auth middleware** — validate tokens from the SaaS platform.
+| File | Role |
+|------|------|
+| `server/main.py` | App factory — mounts routers, configures CORS (allows all origins), and exposes `GET /health` |
+| `server/auth.py` | JWT authentication dependency — decodes SaaS JWTs, resolves company slug, returns `AuthenticatedUser` |
+| `server/livekit_token.py` | `POST /livekit/token` — generates LiveKit room tokens with embedded user metadata |
+| `server/dev_token.py` | Dev-only CLI script — prints a signed SaaS JWT for one of the 3 mock users |
+
+---
+
+## Background Warm-Up
+
+Defined in `agent/core/warmup.py`:
+
+At startup (both CLI REPL and LiveKit agent), a **daemon thread** is spawned that:
+
+1. Loads the sentence-transformer model.
+2. For each company in the mock DB, ensures Qdrant indexes exist for clients and products.
+
+If warm-up fails (e.g., Qdrant is unreachable), a warning is logged but the application continues — the first RAG lookup will just be slower.
+
+---

@@ -4,8 +4,14 @@ export function InvoiceDraftCard({ draft }) {
   return (
     <div className="va-draft-card">
       <div className="va-draft-header">
-        <strong>{draft.client_name}</strong>
-        <span>{draft.client_address}</span>
+        <div className="va-draft-header-row">
+          <strong>{draft.client_name}</strong>
+          {draft.invoice_number && <span className="va-draft-number">{draft.invoice_number}</span>}
+        </div>
+        <span className="va-draft-address">{draft.client_address}</span>
+        {draft.status && (
+          <span className={`va-draft-status va-draft-status-${draft.status}`}>{draft.status}</span>
+        )}
       </div>
       <table className="va-draft-table">
         <thead>

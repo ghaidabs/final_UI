@@ -79,37 +79,26 @@ def build_line_item_confirmation_spoken(invoice_number: str, designation: str, q
 
 def build_invoice_details_display(invoice: dict, language: str = "fr") -> str:
     number = invoice.get("invoice_number")
-    client_name = invoice.get("client_name")
-    amount = display_amount(invoice.get("total_ttc"), invoice.get("currency", "TND"))
     phrase = status_phrase(invoice.get("status"), language)
-    
+
     if language == "en":
-        return f"Invoice {number} for {client_name} {phrase}. Total: {amount}."
-    
-    return f"La facture {number} pour {client_name} {phrase}. Total : {amount}."
+        return f"Invoice {number} {phrase}."
+
+    return f"La facture {number} {phrase}."
 
 
 def build_invoice_draft_display(draft: dict, language: str = "fr") -> str:
-    client_name = draft.get("client_name") or ("the client" if language == "en" else "le client")
-    amount = display_amount(draft.get("total_ttc"), draft.get("currency", "TND"))
-
     if language == "en":
-        return (
-            f"Draft invoice for {client_name} — total {amount}. "
-            f"Confirm or cancel."
-        )
-    return (
-        f"Brouillon de facture pour {client_name} — total {amount}. "
-        f"Confirmez ou annulez."
-    )
+        return "Here's the draft invoice below."
+    return "Voici le brouillon de facture ci-dessous."
 
 
 def build_invoice_list_display(invoices: list[dict], language: str = "fr") -> str:
     if len(invoices) == 1:
         return build_invoice_details_display(invoices[0], language=language)
-    
+
     numbers = " ; ".join(i.get("invoice_number") or "?" for i in invoices)
-    
+
     if language == "en":
         return f"Found {len(invoices)} invoices: {numbers}."
 
@@ -117,21 +106,13 @@ def build_invoice_list_display(invoices: list[dict], language: str = "fr") -> st
 
 
 def build_line_item_added_display(invoice_number: str, designation: str, quantity: float, language: str = "fr") -> str:
-    number = invoice_number
     qty_str = str(int(quantity)) if quantity == int(quantity) else str(quantity)
-
     if language == "en":
-        return f"Added {qty_str} of {designation} to invoice {number}."
-
-    return f"{qty_str} {designation} ajouté(s) à la facture {number}."
+        return f"Added {qty_str} × {designation} — invoice {invoice_number} updated below."
+    return f"{qty_str} × {designation} ajouté — facture {invoice_number} mise à jour ci-dessous."
 
 
 def build_line_item_confirmation_display(invoice_number: str, designation: str, quantity: float, unit_price: float, currency: str, language: str = "fr") -> str:
-    number = invoice_number
-    qty_str = str(int(quantity)) if quantity == int(quantity) else str(quantity)
-    unit_price_str = display_amount(unit_price, currency)
-
     if language == "en":
-        return f"We will add {qty_str} {designation} at {unit_price_str} each to invoice {number}? Confirm or cancel."
-
-    return f"On va ajouter {qty_str} {designation} à {unit_price_str} l'unité à la facture {number} ? Confirmez ou annulez."
+        return "Add this line item to the invoice?"
+    return "Ajouter cet article à la facture ?"

@@ -38,8 +38,8 @@ def build_client_display(client: dict, language: str = "fr") -> str:
     phone = client["phone"]
     
     if language == "en":
-        return f"Client {full_name}. Phone: {phone}. Address: {client['address']}."
-    return f"Client {full_name}. Téléphone : {phone}. Adresse : {client['address']}."
+        return f"Client {full_name} is found. "
+    return f"Client {full_name} est trouvé. "
 
 
 def build_client_list_display(clients: list[dict], language: str = "fr") -> str:

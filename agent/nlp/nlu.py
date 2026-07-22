@@ -2,7 +2,7 @@ from agent.core.session import SessionState
 import json
 from pathlib import Path
 from groq import Groq
-from agent.nlp.validator import redact_pii 
+from agent.nlp.validator import redact_pii, find_invoice_number_candidates
 from schemas.intents import (
     IntentType,
     CreateInvoiceIntent,
@@ -21,9 +21,6 @@ from agent.nlp.normalizer import normalize_invoice_number
 from dotenv import load_dotenv
 
 load_dotenv()
-
-#logging.basicConfig(level=logging.INFO)
-#logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent /"prompts" / "intent_extraction.txt"
 SYSTEM_PROMPT = PROMPT_PATH.read_text()
@@ -79,8 +76,6 @@ def extract_price_only(transcript: str) -> float | None:
 
 def extract_intent(transcript: str, company_slug: str | None = None, language: str = "fr"):
     safe_transcript = redact_pii(transcript, company_slug)
-    #if safe_transcript != transcript:
-        #logger.info("PII redacted: %r -> %r", transcript, safe_transcript)
 
     response = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -95,7 +90,7 @@ def extract_intent(transcript: str, company_slug: str | None = None, language: s
     raw_text = response.choices[0].message.content
 
     try:
-        raw = json.loads(raw_text) # Json string to dictionnary
+        raw = json.loads(raw_text)
     except json.JSONDecodeError:
         return UnknownIntent(
             intent=IntentType.UNKNOWN,
@@ -106,7 +101,7 @@ def extract_intent(transcript: str, company_slug: str | None = None, language: s
 
     intent_type_str = raw.get("intent")
     try:
-        intent_type = IntentType(intent_type_str) # converts to enum
+        intent_type = IntentType(intent_type_str)
     except ValueError:
         return UnknownIntent(
             intent=IntentType.UNKNOWN,
@@ -127,6 +122,13 @@ def extract_intent(transcript: str, company_slug: str | None = None, language: s
         else:
             candidate_number = raw.get("invoice_number") or transcript
         normalized = normalize_invoice_number(candidate_number, company_slug) if company_slug else raw.get("invoice_number")
+
+        if normalized is None and company_slug:
+            for candidate in find_invoice_number_candidates(transcript, company_slug):
+                normalized = normalize_invoice_number(candidate, company_slug)
+                if normalized is not None:
+                    break
+
         if normalized is None:
             raw["invoice_number"] = None
             raw["confidence"] = min(raw["confidence"], 0.4)

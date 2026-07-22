@@ -19,17 +19,26 @@ def _normalize_spoken_symbols(text: str) -> str:
     return text
 
 
-def _shield_invoice_numbers(text: str, company_slug: str | None) -> tuple[str, dict[str, str]]:
+def _invoice_number_pattern(company_slug: str | None) -> re.Pattern:
     context_words = set(_INVOICE_CONTEXT_WORDS)
     if company_slug:
         context_words.add(company_slug.lower())
-
-    pattern = re.compile(
+    return re.compile(
         r"\b(?:" + "|".join(re.escape(w) for w in context_words) + r")\b"
         r"[^\d]{0,20}(\d{8,19})",
         re.IGNORECASE,
     )
 
+
+def find_invoice_number_candidates(text: str, company_slug: str | None = None) -> list[str]:
+    if not text or not text.strip():
+        return []
+    working = _normalize_spoken_symbols(text)
+    return [m.group(1) for m in _invoice_number_pattern(company_slug).finditer(working)]
+
+
+def _shield_invoice_numbers(text: str, company_slug: str | None) -> tuple[str, dict[str, str]]:
+    pattern = _invoice_number_pattern(company_slug)
     shielded: dict[str, str] = {}
 
     def repl(m: re.Match) -> str:
