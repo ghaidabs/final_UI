@@ -138,7 +138,7 @@ async def entrypoint(ctx: JobContext) -> None:
 ```
 
 - Connects to the room with `auto_subscribe=AutoSubscribe.AUDIO_ONLY` — the agent only cares about audio tracks.
-- Starts the RAG warm-up thread (`start_warmup_thread()`) on connection.
+- Starts the search warm-up thread (`start_warmup_thread()`) on connection.
 - Registers four event handlers:
   - **`track_subscribed`** — fires when a participant publishes an audio track. The agent creates a `ParticipantVoiceHandler` for that participant.
   - **`track_unsubscribed`** — fires when a participant's audio track is removed. The handler is told to detach the audio source.

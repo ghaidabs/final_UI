@@ -1,8 +1,9 @@
-# RAG Indexing & Entity Resolution
+# Semantic Search & Entity Resolution
 
-## 1. Where RAG Lives in the Pipeline
+## 1. Where Semantic Search Lives in the Pipeline
 
-RAG is **not** part of the NLU or Dispatcher directly. It is a **fallback tier** inside the entity resolution cascade, invoked by `MockSaasClient.lookup_client()` and `MockSaasClient.lookup_product()` when faster methods fail.
+Semantic search is **not** part of the NLU or Dispatcher directly. It is a **fallback tier** inside the entity resolution cascade, invoked by `MockSaasClient.lookup_client()` and `MockSaasClient.lookup_product()` when faster methods fail.
+
 
 ```
 User says "Ahmed"
@@ -14,10 +15,10 @@ User says "Ahmed"
 │  ① Exact substring match   (mock/db.py → search_clients_by_name)     │
 │         │ found? → return immediately                                │
 │         │ empty? ▼                                                   │
-│  ② Fuzzy match             (agent/fuzzy.py → find_fuzzy)             │
+│  ② Fuzzy match             (search/fuzzy.py → find_fuzzy)            │
 │         │ found? → return with _fuzzy_score                          │
 │         │ empty? ▼                                                   │
-│  ③ Semantic / RAG match    (rag/ → ensure_index + find_similar)      │
+│  ③ Semantic search         (search/ → ensure_index + find_similar)   │
 │         │ found? → return with _fuzzy_score (from cosine score)      │
 │         │ empty? → return []                                         │
 └──────────────────────────────────────────────────────────────────────┘
@@ -33,8 +34,8 @@ The same three-tier cascade applies to **both clients and products**. The dispat
 
 | File | Role |
 |------|------|
-| `rag/embeddings.py` | Loads the sentence-transformer model and produces dense vectors |
-| `rag/indexer.py` | Creates Qdrant collections and upserts entity points |
+| `search/embeddings.py` | Loads the sentence-transformer model and produces dense vectors |
+| `search/indexer.py` | Creates Qdrant collections and upserts entity points |
 
 ### 2.2 Embedding Model
 
@@ -74,7 +75,7 @@ Before upserting points, the indexer checks if the collection already exists in 
 
 ### 2.6 Lazy Indexing Strategy (`_ensure_index`)
 
-Indexing is **lazy** — it only happens when RAG is actually needed, not at startup. The logic has three guards to avoid redundant work:
+Indexing is **lazy** — it only happens when semantic search is actually needed, not at startup. The logic has three guards to avoid redundant work:
 
 ```
 _ensure_index(entity_type, company_id, fetch_fn, text_fn, force)
@@ -94,7 +95,7 @@ _ensure_index(entity_type, company_id, fetch_fn, text_fn, force)
 
 1. **In-memory flag (`_indexed_once`)**: A set of `(entity_type, company_id)` tuples. If the key is already present and `force=False`, the function returns immediately — no network calls at all.
 
-2. **Thread lock (`_index_lock`)**: A `threading.Lock` protects against concurrent threads (e.g., the RAG warm-up thread and a request thread) both trying to index the same collection simultaneously. After acquiring the lock, it re-checks `_indexed_once` (double-checked locking pattern).
+2. **Thread lock (`_index_lock`)**: A `threading.Lock` protects against concurrent threads (e.g., the search warm-up thread and a request thread) both trying to index the same collection simultaneously. After acquiring the lock, it re-checks `_indexed_once` (double-checked locking pattern).
 
 3. **Remote count check**: If this is the first time in this process, the indexer fetches the current point count from Qdrant (`_remote_point_count`). If the remote count matches the number of local entities, it assumes the collection is already up-to-date from a previous process run and skips re-indexing. This avoids re-embedding and re-upserting on every server restart.
 
@@ -107,7 +108,7 @@ At import time, `agent/main.py` spawns a **daemon thread** that pre-indexes all 
 This means:
 - The embedding model is downloaded/loaded in the background while the user is selecting their mock user.
 - Qdrant collections are populated before the first voice command arrives.
-- If warm-up fails (e.g., Qdrant is unreachable), a warning is logged but the REPL continues — the first RAG lookup will just be slower (or fail gracefully).
+- If warm-up fails (e.g., Qdrant is unreachable), a warning is logged but the REPL continues — the first semantic search lookup will just be slower (or fail gracefully).
 
 ### 2.8 `force` Parameter
 
@@ -126,7 +127,7 @@ This is useful when the underlying data has changed (e.g., a new client was adde
 
 | File | Role |
 |------|------|
-| `rag/retriever.py` | Embeds the query, searches Qdrant, filters by similarity floor |
+| `search/retriever.py` | Embeds the query, searches Qdrant, filters by similarity floor |
 
 ### 3.2 Search Flow
 
@@ -149,16 +150,33 @@ The threshold of `0.55` was chosen empirically to balance recall vs. precision f
 
 ---
 
-## 4. How MockSaasClient Orchestrates the Cascade
+## 4. Fuzzy Matching — String-Level Entity Search
+
+### 4.1 Files Involved
+
+| File | Role |
+|------|------|
+| `search/fuzzy.py` | RapidFuzz-based entity resolution for client names and product names |
+
+### 4.2 How It Works
+
+- Uses `WRatio` scorer from `rapidfuzz` — a weighted combination of multiple string similarity metrics.
+- **Threshold**: 75% minimum score (configurable via `FUZZY_FLOOR`).
+- Returns top-K matches with their `_fuzzy_score` attached (score / 100), so the dispatcher can decide whether to auto-resolve or ask for confirmation.
+- Operates entirely in-memory — no external services or embeddings required.
+
+---
+
+## 5. How MockSaasClient Orchestrates the Cascade
 
 The three-tier cascade is implemented identically for clients and products in `api/mock_saas_client.py`:
 
-### 4.1 Client Lookup
+### 5.1 Client Lookup
 
 **Important details:**
 
-| Aspect | Tier 1 (Exact) | Tier 2 (Fuzzy) | Tier 3 (RAG) |
-|--------|---------------|----------------|---------------|
+| Aspect | Tier 1 (Exact) | Tier 2 (Fuzzy) | Tier 3 (Semantic) |
+|--------|---------------|----------------|-----------------|
 | Method | `str in str` substring | `rapidfuzz.fuzz.WRatio` | `sentence-transformers` + Qdrant cosine |
 | Threshold | N/A | 75% | 0.55 |
 | Speed | Instant (in-memory) | ~ms (in-memory) | ~100ms+ (embedding + network) |
@@ -166,18 +184,18 @@ The three-tier cascade is implemented identically for clients and products in `a
 | Threading | Sync | Sync | `asyncio.to_thread` (non-blocking) |
 
 - **`_fuzzy_score` marker**: Results from tier 2 and tier 3 carry a `_fuzzy_score` key. This is how the dispatcher knows the match is approximate and should trigger a **disambiguation prompt** rather than being silently accepted.
-- **`asyncio.to_thread`**: RAG calls (embedding + Qdrant search) are CPU/IO-bound, so they're offloaded to a thread to avoid blocking the async event loop.
-- **Hydration from DB**: RAG returns only `{"id", "text", "score"}`. The client re-fetches the full entity record via `get_client_by_id()` to ensure the returned dict has all fields the dispatcher expects. If the entity was deleted between indexing and retrieval, the walrus operator `(c := get_client_by_id(...))` filters it out.
+- **`asyncio.to_thread`**: Semantic search calls (embedding + Qdrant search) are CPU/IO-bound, so they're offloaded to a thread to avoid blocking the async event loop.
+- **Hydration from DB**: Semantic search returns only `{"id", "text", "score"}`. The client re-fetches the full entity record via `get_client_by_id()` to ensure the returned dict has all fields the dispatcher expects. If the entity was deleted between indexing and retrieval, the walrus operator `(c := get_client_by_id(...))` filters it out.
 
-### 4.2 Product Lookup
+### 5.2 Product Lookup
 
 Identical cascade structure, using `search_products_by_name`, `find_fuzzy` against `designation`, and `ensure_product_index` / `find_similar("product", ...)`.
 
 ---
 
-## 5. How the Dispatcher Uses Resolution Results
+## 6. How the Dispatcher Uses Resolution Results
 
-The dispatcher doesn't call RAG directly — it calls `saas.lookup_client()` or `saas.lookup_product()` and reacts to the **shape** of the returned list:
+The dispatcher doesn't call the search layer directly — it calls `saas.lookup_client()` or `saas.lookup_product()` and reacts to the **shape** of the returned list:
 
 | Result | `_fuzzy_score` present? | Dispatcher action |
 |--------|------------------------|-------------------|
@@ -186,7 +204,7 @@ The dispatcher doesn't call RAG directly — it calls `saas.lookup_client()` or 
 | Multiple matches | Either | **Multiple candidates prompt** — list all names, ask user to pick |
 | 0 matches | N/A | **Not found** — return error or ask user to clarify |
 
-### 5.1 Disambiguation Flow (Single Fuzzy/RAG Match)
+### 6.1 Disambiguation Flow (Single Fuzzy/Semantic Match)
 
 When exactly one candidate is returned with a `_fuzzy_score`:
 
@@ -203,7 +221,7 @@ When exactly one candidate is returned with a `_fuzzy_score`:
 3. On **confirm** → `_resolve_disambiguation()` accepts the candidate and resumes the original flow (create invoice, add line item, or lookup client).
 4. On **cancel** → the session enters `awaiting_field="client_name"` (or `"product_name"`) and asks the user to re-state the name.
 
-### 5.2 Product Disambiguation During `create_invoice`
+### 6.2 Product Disambiguation During `create_invoice`
 
 When creating an invoice with multiple articles, disambiguation can pause **mid-list**:
 
@@ -216,7 +234,7 @@ When creating an invoice with multiple articles, disambiguation can pause **mid-
 
 ---
 
-## 6. Data Flow Summary
+## 7. Data Flow Summary
 
 ```
                     ┌─────────────────────────────────────────────┐
@@ -238,11 +256,11 @@ When creating an invoice with multiple articles, disambiguation can pause **mid-
                     │  Dispatcher calls saas.lookup_client(name)  │
                     │        ↓                                    │
                     │  MockSaasClient runs cascade:               │
-                    │    ① Exact → ② Fuzzy → ③ RAG                │
+                    │    ① Exact → ② Fuzzy → ③ Semantic           │
                     │        ↓                                    │
                     │  Dispatcher inspects matches:               │
                     │    • exact hit → auto-accept                │
-                    │    • fuzzy/RAG hit → disambiguation prompt  │
+                    │    • fuzzy/semantic hit → disambig. prompt   │
                     │    • no hit → error / clarification         │
                     │        ↓                                    │
                     │  Response → Templates → TTS → User          │
@@ -251,7 +269,7 @@ When creating an invoice with multiple articles, disambiguation can pause **mid-
 
 ---
 
-## 7. Configuration Reference
+## 8. Configuration Reference
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -261,7 +279,7 @@ When creating an invoice with multiple articles, disambiguation can pause **mid-
 
 | Constant | File | Value | Description |
 |----------|------|-------|-------------|
-| `_MODEL_NAME` | `rag/embeddings.py` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
-| `SIMILARITY_FLOOR` | `rag/retriever.py` | `0.55` | Minimum cosine similarity to accept a RAG match |
-| `FUZZY_FLOOR` | `agent/fuzzy.py` | `75` | Minimum RapidFuzz WRatio score (out of 100) |
-| `Distance` | `rag/indexer.py` | `COSINE` | Qdrant vector distance metric |
+| `_MODEL_NAME` | `search/embeddings.py` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
+| `SIMILARITY_FLOOR` | `search/retriever.py` | `0.55` | Minimum cosine similarity to accept a semantic match |
+| `FUZZY_FLOOR` | `search/fuzzy.py` | `75` | Minimum RapidFuzz WRatio score (out of 100) |
+| `Distance` | `search/indexer.py` | `COSINE` | Qdrant vector distance metric |

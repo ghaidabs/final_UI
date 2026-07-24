@@ -1,12 +1,12 @@
 from functools import lru_cache
-import rag.indexer as indexer
+import search.indexer as indexer
 
 SIMILARITY_FLOOR = 0.55
 
 
 @lru_cache(maxsize=256)
 def find_similar(entity_type: str, company_id: int, query_text: str, top_k: int = 3) -> list[dict]:
-    from rag.embeddings import embed_one
+    from search.embeddings import embed_one
     query_vec = embed_one(query_text)
 
     response = indexer.get_qdrant().query_points(

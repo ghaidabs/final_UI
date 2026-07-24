@@ -2,7 +2,7 @@ import os
 import threading
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
-from rag.embeddings import embed
+from search.embeddings import embed
 from dotenv import load_dotenv
 from mock.db import get_all_clients, get_all_products
 

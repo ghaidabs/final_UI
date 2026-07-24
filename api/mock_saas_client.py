@@ -6,9 +6,9 @@ from mock.db import (
     build_invoice_draft, confirm_invoice_draft, get_all_products, get_all_clients
 )
 from agent.nlp.normalizer import normalize_invoice_number
-from agent.nlp.fuzzy import find_fuzzy
-from rag.indexer import ensure_client_index, ensure_product_index
-from rag.retriever import find_similar
+from search.fuzzy import find_fuzzy
+from search.indexer import ensure_client_index, ensure_product_index
+from search.retriever import find_similar
 import asyncio
 
 

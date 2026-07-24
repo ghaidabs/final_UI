@@ -27,7 +27,7 @@ Users speak natural-language commands — *"Crée une facture pour Ahmed, 3 clav
 - An **ElevenLabs** API key (TTS)
 - A **LiveKit Cloud** account or self-hosted LiveKit server
 - (Optional) A Hugging Face token (`HF_TOKEN`) for gated sentence-transformer models
-- (Optional) A **Qdrant** instance for RAG-based entity resolution
+- (Optional) A **Qdrant** instance for vector-based entity resolution
 
 ### Setup
 

@@ -17,7 +17,7 @@
        ▼                                 ▼                        │
 ┌──────────┐                    ┌──────────────┐          ┌───────┴───────┐
 │   TTS    │                    │  SaaS Client │          │  Normalizer   │
-│(ElevenLb)│                    │ (mock / real)│          │  Fuzzy / RAG  │
+│(ElevenLb)│                    │ (mock / real)│          │Fuzzy/Semantic │
 └──────────┘                    └──────────────┘          └───────────────┘
 ```
 
@@ -35,12 +35,12 @@ InVoice-agent-main/
 │   │   ├── pipeline.py             # Dispatch entry point
 │   │   ├── session.py              # SessionState & UserContext dataclasses
 │   │   ├── user_context.py         # new session helper
-│   │   └── warmup.py               # Background RAG warm-up thread
+│   │   └── warmup.py               # Background search warm-up thread
 │   ├── nlp/                        
 │   │   ├── nlu.py                  # LLM-powered intent extraction
 │   │   ├── validator.py            # PII redaction (regex-based)
 │   │   ├── normalizer.py           # Invoice-number normalization
-│   │   └── fuzzy.py                # Fuzzy entity matching (rapidfuzz)
+│   │   └── normalizer.py           # Invoice-number normalization
 │   ├── speech/                     
 │   │   ├── stt.py                  # Deepgram Nova-3 streaming STT session
 │   │   ├── stt_console.py          # Standalone mic → STT debugger
@@ -53,8 +53,9 @@ InVoice-agent-main/
 │   ├── mock_saas_client.py         # Mock client backed by local JSON DB, with entity cascade
 │   └── saas_client.py              # Real HTTP client (placeholder)
 │
-├── rag/                            
+├── search/                         
 │   ├── embeddings.py               # Sentence-transformer embeddings
+│   ├── fuzzy.py                    # Fuzzy entity matching (rapidfuzz)
 │   ├── indexer.py                  # Qdrant vector indexing
 │   └── retriever.py                # Similarity search against Qdrant
 │
@@ -107,7 +108,7 @@ InVoice-agent-main/
 ├── documentation/                  
 │   ├── Architecture.md             
 │   ├── LiveKit.md                  
-│   ├── RAG.md                      
+│   ├── Search.md                   
 │   └── UI.md                      
 │
 ├── .env.example
@@ -217,29 +218,28 @@ When the dispatcher is awaiting a unit price from the user, this function extrac
 
 ---
 
-### 5. Normalizer & Fuzzy Matching
+### 5. Normalizer
 
 | File | Description |
 |------|-------------|
 | `agent/nlp/normalizer.py` | Converts spoken/partial invoice numbers into the canonical format `SLUG_FYYYYMM-SEQ` |
-| `agent/nlp/fuzzy.py` | RapidFuzz-based entity resolution for client names and product names |
 
 - **Normalizer:** extracts the company slug and 9+ digits, reassembles into `SLUG_FYYYYMM-SEQ`. Returns `None` if fewer than 9 digits are found (triggers a clarification flow).
-- **Fuzzy matching:** uses `WRatio` scorer with a floor of 75%. Returns top-K matches with their `_fuzzy_score` attached, so the dispatcher can decide whether to auto-resolve or ask for confirmation.
 
 ---
 
-### 6. Retrieval-Augmented Generation (RAG)
+### 6. Entity Search (Fuzzy + Semantic)
 
 | File | Description |
 |------|-------------|
-| `rag/embeddings.py` | Produces dense vectors using `sentence-transformers/all-MiniLM-L6-v2` |
-| `rag/indexer.py` | Creates and upserts into per-company Qdrant collections |
-| `rag/retriever.py` | Cosine similarity search with a floor of `0.55` |
+| `search/fuzzy.py` | RapidFuzz-based fuzzy string matching with a floor of 75% |
+| `search/embeddings.py` | Produces dense vectors using `sentence-transformers/all-MiniLM-L6-v2` |
+| `search/indexer.py` | Creates and upserts into per-company Qdrant collections |
+| `search/retriever.py` | Cosine similarity search with a floor of `0.55` |
 
 **How it's used:**
 
-The RAG layer is a **fallback** for entity resolution. When a user says a client or product name that doesn't match via exact substring or fuzzy matching, the system:
+The search layer is a **fallback** for entity resolution. When a user says a client or product name that doesn't match via exact substring, the system tries fuzzy matching first, then semantic vector search:
 
 1. Indexes all clients/products for the company into Qdrant (lazy, once).
 2. Embeds the spoken query and runs a similarity search.
@@ -250,10 +250,10 @@ Collections are named `{entity_type}s_{company_id}` (e.g., `clients_1`, `product
 **Entity resolution cascade** (in `MockSaasClient`):
 
 ```
-Exact substring match → Fuzzy match (rapidfuzz) → Semantic match (RAG)
+Exact substring match → Fuzzy match (rapidfuzz) → Semantic match (vector search)
 ```
 
-> See [RAG.md](../documentation/RAG.md) for detailed documentation on indexing, retrieval, and the cascade.
+> See [Search.md](../documentation/Search.md) for detailed documentation on indexing, retrieval, and the cascade.
 
 ---
 
@@ -297,7 +297,7 @@ When entity resolution (client or product) returns a single fuzzy/semantic match
 
 #### `create_invoice` flow
 
-1. Resolve client (exact → fuzzy → RAG; ambiguous = disambiguation prompt).
+1. Resolve client (exact → fuzzy → semantic search; ambiguous = disambiguation prompt).
 2. Check for missing unit prices → stash `awaiting_article_indices` and ask user.
 3. Resolve each product name via `_build_line_items_or_pause()` — may pause for disambiguation at any article.
 4. Build a draft via `_finalize_invoice_draft()` and store it in `session.pending_draft`.
@@ -459,6 +459,6 @@ At startup (both CLI REPL and LiveKit agent), a **daemon thread** is spawned tha
 1. Loads the sentence-transformer model.
 2. For each company in the mock DB, ensures Qdrant indexes exist for clients and products.
 
-If warm-up fails (e.g., Qdrant is unreachable), a warning is logged but the application continues — the first RAG lookup will just be slower.
+If warm-up fails (e.g., Qdrant is unreachable), a warning is logged but the application continues — the first semantic search lookup will just be slower.
 
 ---
